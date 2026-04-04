@@ -18,18 +18,31 @@ const MoodBackground = ({ mood }: { mood: string }) => {
   const selectedColors = (colors as any)[mood] || colors.default;
 
   return (
-    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-      <motion.div
-        className="absolute inset-0 opacity-20"
-        animate={{
-          background: [
-            `radial-gradient(circle at 20% 30%, ${selectedColors[0]}, transparent)`,
-            `radial-gradient(circle at 80% 70%, ${selectedColors[1]}, transparent)`,
-            `radial-gradient(circle at 50% 50%, ${selectedColors[2]}, transparent)`,
-          ],
-        }}
-        transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
-      />
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505]">
+      {selectedColors.map((color: string, i: number) => (
+        <motion.div
+          key={`${mood}-${i}`}
+          className="absolute rounded-full mix-blend-screen filter blur-[100px] opacity-30"
+          style={{
+            backgroundColor: color,
+            width: "50vw",
+            height: "50vw",
+            top: i === 0 ? "-10%" : i === 1 ? "40%" : "60%",
+            left: i === 0 ? "-10%" : i === 1 ? "60%" : "10%",
+          }}
+          animate={{
+            x: [0, 100, -50, 0],
+            y: [0, -100, 50, 0],
+            scale: [1, 1.2, 0.8, 1],
+          }}
+          transition={{
+            duration: 15 + i * 5,
+            repeat: Infinity,
+            repeatType: "reverse",
+            ease: "easeInOut",
+          }}
+        />
+      ))}
     </div>
   );
 };
@@ -668,26 +681,27 @@ export default function App() {
     div.style.position = "fixed";
     div.style.left = Math.random() * 80 + 10 + "%";
     div.style.bottom = "-50px";
-    div.style.fontSize = "2rem";
+    div.style.fontSize = "3rem";
     div.style.pointerEvents = "none";
     div.style.zIndex = "9999";
     div.style.opacity = "1";
-    div.style.transition = "all 4s cubic-bezier(0.22, 1, 0.36, 1)";
+    div.style.transform = "translateY(0px) rotate(0deg)";
+    div.style.transition = "transform 5s ease-out, opacity 5s ease-in-out";
     document.body.appendChild(div);
     console.log("Emoji element added to body:", div);
     
     // Force reflow
     void div.offsetWidth;
 
-    const rotation = Math.random() * 180 - 90;
+    const rotation = Math.random() * 360 - 180;
     const horizontalOffset = Math.random() * 200 - 100;
 
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       div.style.transform = `translate(${horizontalOffset}px, -${window.innerHeight + 100}px) rotate(${rotation}deg)`;
       div.style.opacity = "0";
-    });
+    }, 50);
 
-    setTimeout(() => div.remove(), 5000);
+    setTimeout(() => div.remove(), 5050);
   };
 
   const fetchTidalManifest = async (id: string) => {
@@ -928,7 +942,13 @@ export default function App() {
       const res = await axios.get(`/api/lyrics?id=${id}`);
       setLyrics(res.data.lyrics);
       
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        console.warn("GEMINI_API_KEY is not set. Cannot analyze mood.");
+        return;
+      }
+      
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `Analyze the mood of these lyrics and return only one word: happy, sad, energetic, or calm. Lyrics: ${res.data.lyrics.lyrics.substring(0, 500)}`,
