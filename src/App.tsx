@@ -7,25 +7,33 @@ import { cn, formatTime, generateRoomCode } from "./lib/utils";
 import axios from "axios";
 import confetti from "canvas-confetti";
 
+import shaka from "shaka-player";
+
 // --- Components ---
 
-const AvatarSelector = ({ onSelect }: { onSelect: (avatar: string) => void }) => {
-  const avatars = [
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix",
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka",
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Milo",
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Luna",
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Oscar",
-    "https://api.dicebear.com/7.x/avataaars/svg?seed=Zoe",
-  ];
+const COOL_AVATARS = [
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Milo",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Luna",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Oscar",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Zoe",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Jasper",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Willow",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Jack",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Maya",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Leo",
+  "https://api.dicebear.com/7.x/avataaars/svg?seed=Ruby",
+];
 
+const AvatarSelector = ({ onSelect }: { onSelect: (avatar: string) => void }) => {
   return (
-    <div className="flex gap-4 flex-wrap justify-center">
-      {avatars.map((url) => (
+    <div className="flex gap-4 flex-wrap justify-center max-h-48 overflow-y-auto p-2 custom-scrollbar">
+      {COOL_AVATARS.map((url) => (
         <button
           key={url}
           onClick={() => onSelect(url)}
-          className="w-16 h-16 rounded-full overflow-hidden border-2 border-transparent hover:border-white transition-all"
+          className="w-16 h-16 rounded-full overflow-hidden border-2 border-transparent hover:border-white transition-all hover:scale-110"
         >
           <img src={url} alt="avatar" referrerPolicy="no-referrer" />
         </button>
@@ -307,6 +315,34 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [tempName, setTempName] = useState("");
+  const [tempAvatar, setTempAvatar] = useState("");
+  const shakaPlayerRef = useRef<shaka.Player | null>(null);
+
+  useEffect(() => {
+    shaka.polyfill.installAll();
+    if (audioRef.current) {
+      shakaPlayerRef.current = new shaka.Player(audioRef.current);
+      shakaPlayerRef.current.addEventListener("error", (event: any) => {
+        console.error("Shaka Player Error:", event.detail);
+      });
+    }
+    return () => {
+      if (shakaPlayerRef.current) {
+        shakaPlayerRef.current.destroy();
+      }
+    };
+  }, []);
+
+  const updateProfile = () => {
+    if (!tempName || !tempAvatar) return;
+    const updatedUser = { ...user!, name: tempName, avatar: tempAvatar };
+    setUser(updatedUser);
+    localStorage.setItem("sync-me-user", JSON.stringify(updatedUser));
+    socket.emit("update-user", { code: room?.code, user: updatedUser });
+    setIsEditingProfile(false);
+  };
 
   useEffect(() => {
     socket.on("init-state", (state: RoomState) => {
@@ -446,20 +482,38 @@ export default function App() {
         
         const manifestJson = JSON.parse(atob(finalManifest));
         if (manifestJson.urls && manifestJson.urls.length > 0) {
+          if (shakaPlayerRef.current) {
+            await shakaPlayerRef.current.unload();
+          }
           setAudioUrl(manifestJson.urls[0]);
         }
       } else if (manifestMimeType === "application/dash+xml") {
-        // Fallback to HIGH/LOW if DASH is returned and we can't play it
-        const fallbackQuality = audioQuality === "HI_RES_LOSSLESS" || audioQuality === "LOSSLESS" ? "HIGH" : "LOW";
-        const fallbackRes = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=${fallbackQuality}`);
-        if (fallbackRes.data?.data?.manifestMimeType === "application/vnd.tidal.bts") {
-          const m = fallbackRes.data.data.manifest;
-          const padded = m.replace(/-/g, '+').replace(/_/g, '/');
-          const missing = (4 - (padded.length % 4)) % 4;
-          const final = padded + "=".repeat(missing);
-          const json = JSON.parse(atob(final));
-          if (json.urls && json.urls.length > 0) {
-            setAudioUrl(json.urls[0]);
+        const paddedManifest = manifest.replace(/-/g, '+').replace(/_/g, '/');
+        const missingPadding = (4 - (paddedManifest.length % 4)) % 4;
+        const finalManifest = paddedManifest + "=".repeat(missingPadding);
+        
+        const manifestXml = atob(finalManifest);
+        const blob = new Blob([manifestXml], { type: "application/dash+xml" });
+        const manifestUrl = URL.createObjectURL(blob);
+        
+        if (shakaPlayerRef.current) {
+          try {
+            await shakaPlayerRef.current.load(manifestUrl);
+            setAudioUrl(null); // Clear direct URL if using Shaka
+          } catch (err) {
+            console.error("Shaka load error:", err);
+            // Fallback to HIGH if DASH fails
+            const fallbackRes = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=HIGH`);
+            if (fallbackRes.data?.data?.manifestMimeType === "application/vnd.tidal.bts") {
+              const m = fallbackRes.data.data.manifest;
+              const p = m.replace(/-/g, '+').replace(/_/g, '/');
+              const miss = (4 - (p.length % 4)) % 4;
+              const f = p + "=".repeat(miss);
+              const j = JSON.parse(atob(f));
+              if (j.urls && j.urls.length > 0) {
+                setAudioUrl(j.urls[0]);
+              }
+            }
           }
         }
       }
@@ -701,7 +755,20 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div className="hidden md:flex -space-x-2">
               {room.users.map((u) => (
-                <img key={u.id} src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.name} alt={u.name} referrerPolicy="no-referrer" />
+                <button
+                  key={u.id}
+                  onClick={() => {
+                    if (u.id === socket.id) {
+                      setTempName(u.name);
+                      setTempAvatar(u.avatar);
+                      setIsEditingProfile(true);
+                    }
+                  }}
+                  className={cn("relative transition-transform hover:scale-110 z-10", u.id === socket.id ? "cursor-pointer" : "cursor-default")}
+                >
+                  <img src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.id === socket.id ? "Edit Profile" : u.name} alt={u.name} referrerPolicy="no-referrer" />
+                  {u.id === socket.id && <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-[#050505] rounded-full" />}
+                </button>
               ))}
             </div>
             <button 
@@ -715,6 +782,16 @@ export default function App() {
               {hasNewMessages && (
                 <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
               )}
+            </button>
+            <button
+              onClick={() => {
+                setTempName(user.name);
+                setTempAvatar(user.avatar);
+                setIsEditingProfile(true);
+              }}
+              className="md:hidden w-8 h-8 rounded-full overflow-hidden border border-white/20"
+            >
+              <img src={user.avatar} alt="me" referrerPolicy="no-referrer" />
             </button>
           </div>
         </header>
@@ -1087,6 +1164,64 @@ export default function App() {
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Profile Edit Modal */}
+      <AnimatePresence>
+        {isEditingProfile && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="glass p-8 rounded-3xl w-full max-w-md space-y-6"
+            >
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold">Edit Profile</h2>
+                <button onClick={() => setIsEditingProfile(false)} className="text-gray-400 hover:text-white">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex justify-center">
+                  <div className="relative group">
+                    <img src={tempAvatar} className="w-24 h-24 rounded-full border-4 border-white/10" alt="avatar" referrerPolicy="no-referrer" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex items-center justify-center text-[10px] font-bold">
+                      CLICK BELOW
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Choose Avatar</label>
+                  <AvatarSelector onSelect={setTempAvatar} />
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Display Name</label>
+                  <input
+                    type="text"
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
+                  />
+                </div>
+
+                <button
+                  onClick={updateProfile}
+                  className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-all"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Lyrics Modal */}
       <AnimatePresence>

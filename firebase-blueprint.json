@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents a user in the application.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The user's unique ID." },
+        "name": { "type": "string", "description": "The user's display name." },
+        "avatar": { "type": "string", "description": "URL to the user's avatar." }
+      },
+      "required": ["id", "name", "avatar"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Represents a room where users jam together.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "The room code." },
+        "users": { "type": "array", "description": "List of users in the room." },
+        "queue": { "type": "array", "description": "List of items in the queue." },
+        "messages": { "type": "array", "description": "List of chat messages." },
+        "logs": { "type": "array", "description": "List of room logs." },
+        "currentMedia": { "type": "object", "description": "Currently playing media." }
+      },
+      "required": ["code", "users", "queue", "messages", "logs", "currentMedia"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "Room" },
+      "description": "Stores room state."
+    }
+  }
+}

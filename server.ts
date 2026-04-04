@@ -258,6 +258,20 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("update-user", ({ code, user }) => {
+    if (rooms[code]) {
+      const index = rooms[code].users.findIndex(u => u.id === socket.id);
+      if (index !== -1) {
+        const oldName = rooms[code].users[index].name;
+        rooms[code].users[index] = { ...rooms[code].users[index], ...user };
+        if (user.name && user.name !== oldName) {
+          rooms[code].logs.push(`${oldName} changed their name to ${user.name}.`);
+        }
+        io.to(code).emit("room-update", rooms[code]);
+      }
+    }
+  });
+
   socket.on("disconnect", () => {
     for (const code in rooms) {
       const userIndex = rooms[code].users.findIndex((u) => u.id === socket.id);
