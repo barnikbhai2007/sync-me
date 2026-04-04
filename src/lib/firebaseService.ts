@@ -106,3 +106,32 @@ export const subscribeToRoom = (code: string, callback: (state: RoomState) => vo
     }
   });
 };
+
+export const toggleFavorite = async (userId: string, item: QueueItem, isFavorite: boolean) => {
+  const userRef = doc(db, 'users', userId);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) {
+    await setDoc(userRef, { favorites: [] });
+  }
+  
+  if (isFavorite) {
+    await updateDoc(userRef, {
+      favorites: arrayRemove(item)
+    });
+  } else {
+    await updateDoc(userRef, {
+      favorites: arrayUnion(item)
+    });
+  }
+};
+
+export const subscribeToFavorites = (userId: string, callback: (favorites: QueueItem[]) => void) => {
+  const userRef = doc(db, 'users', userId);
+  return onSnapshot(userRef, (doc) => {
+    if (doc.exists() && doc.data().favorites) {
+      callback(doc.data().favorites as QueueItem[]);
+    } else {
+      callback([]);
+    }
+  });
+};

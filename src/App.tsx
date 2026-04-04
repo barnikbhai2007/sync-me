@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
-import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
+import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart } from "lucide-react";
+import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube from 'react-youtube';
@@ -278,6 +278,18 @@ export default function App() {
   const [localTime, setLocalTime] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW">("HIGH");
   const [mood, setMood] = useState("default");
+  const [favorites, setFavorites] = useState<QueueItem[]>([]);
+  const [showProfile, setShowProfile] = useState(false);
+  const [profileTab, setProfileTab] = useState<"edit" | "favorites">("edit");
+
+  useEffect(() => {
+    if (user?.id) {
+      const unsubscribe = subscribeToFavorites(user.id, (favs) => {
+        setFavorites(favs);
+      });
+      return () => unsubscribe();
+    }
+  }, [user?.id]);
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [isJoiningRoom, setIsJoiningRoom] = useState(() => {
@@ -704,12 +716,11 @@ export default function App() {
     setTimeout(() => div.remove(), 5050);
   };
 
-  const fetchTidalManifest = async (id: string) => {
+  const fetchTidalManifest = async (id: string, qualityToTry: string = audioQuality) => {
     try {
-      const res = await axios.get(`/api/track?id=${id}&quality=${audioQuality}`);
+      const res = await axios.get(`/api/track?id=${id}&quality=${qualityToTry}`);
       if (!res.data?.data) {
-        console.error("No data returned from TIDAL track API");
-        return;
+        throw new Error("No data returned from TIDAL track API");
       }
       
       const { manifest, manifestMimeType } = res.data.data;
@@ -744,23 +755,19 @@ export default function App() {
             setAudioUrl(null); // Clear direct URL if using Shaka
           } catch (err) {
             console.error("Shaka load error:", err);
-            // Fallback to HIGH if DASH fails
-            const fallbackRes = await axios.get(`/api/track?id=${id}&quality=HIGH`);
-            if (fallbackRes.data?.data?.manifestMimeType === "application/vnd.tidal.bts") {
-              const m = fallbackRes.data.data.manifest;
-              const p = m.replace(/-/g, '+').replace(/_/g, '/');
-              const miss = (4 - (p.length % 4)) % 4;
-              const f = p + "=".repeat(miss);
-              const j = JSON.parse(atob(f));
-              if (j.urls && j.urls.length > 0) {
-                setAudioUrl(j.urls[0]);
-              }
-            }
+            throw new Error("Shaka load failed");
           }
         }
       }
     } catch (err) {
-      console.error("Error fetching TIDAL manifest:", err);
+      console.error(`Error fetching TIDAL manifest for quality ${qualityToTry}:`, err);
+      const qualities = ["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"];
+      const currentIndex = qualities.indexOf(qualityToTry);
+      if (currentIndex !== -1 && currentIndex < qualities.length - 1) {
+        const nextQuality = qualities[currentIndex + 1];
+        console.warn(`Falling back to ${nextQuality}`);
+        return fetchTidalManifest(id, nextQuality);
+      }
     }
   };
 
@@ -904,6 +911,33 @@ export default function App() {
     }
   };
 
+  const handleToggleFavorite = async (item: QueueItem) => {
+    if (!user?.id || !auth.currentUser) {
+      setNotifications((prev) => [...prev, "Please sign in with Google to save favorites."]);
+      return;
+    }
+    const isFav = favorites.some(f => f.id === item.id);
+    await toggleFavorite(user.id, item, isFav);
+  };
+
+  const playFavoriteList = () => {
+    if (!user?.id || !auth.currentUser) {
+      setNotifications((prev) => [...prev, "Please sign in with Google to play favorites."]);
+      return;
+    }
+    if (favorites.length === 0) return;
+    
+    // Add all favorites to queue
+    favorites.forEach(fav => {
+      addToQueue(fav);
+    });
+    
+    // If nothing is playing, play the first one
+    if (!room?.currentMedia.playing && favorites.length > 0) {
+      playNow(favorites[0]);
+    }
+    setShowProfile(false);
+  };
   const playNow = (item: any) => {
     const queueItem: QueueItem = {
       id: Math.random().toString(36).substring(7),
@@ -942,7 +976,7 @@ export default function App() {
       const res = await axios.get(`/api/lyrics?id=${id}`);
       setLyrics(res.data.lyrics);
       
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         console.warn("GEMINI_API_KEY is not set. Cannot analyze mood.");
         return;
@@ -1290,7 +1324,15 @@ export default function App() {
               <div className="glass p-6 rounded-3xl space-y-6">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h3 className="text-xl font-bold">{room.currentMedia.item.title}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xl font-bold">{room.currentMedia.item.title}</h3>
+                      <button 
+                        onClick={() => handleToggleFavorite(room.currentMedia.item!)}
+                        className="text-white hover:text-red-500 transition-colors"
+                      >
+                        <Heart size={20} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
+                      </button>
+                    </div>
                     <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
                   </div>
                 </div>
@@ -1342,7 +1384,15 @@ export default function App() {
                 </motion.div>
                 <div className="space-y-8">
                   <div className="space-y-2">
-                    <h1 className="text-4xl font-black tracking-tight">{room.currentMedia.item.title}</h1>
+                    <div className="flex items-center gap-4">
+                      <h1 className="text-4xl font-black tracking-tight">{room.currentMedia.item.title}</h1>
+                      <button 
+                        onClick={() => handleToggleFavorite(room.currentMedia.item!)}
+                        className="text-white hover:text-red-500 transition-colors mt-2"
+                      >
+                        <Heart size={32} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
+                      </button>
+                    </div>
                     <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
                   </div>
 
@@ -1598,47 +1648,103 @@ export default function App() {
             <motion.div
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
-              className="glass p-8 rounded-3xl w-full max-w-md space-y-6"
+              className="glass p-8 rounded-3xl w-full max-w-md space-y-6 max-h-[90vh] overflow-y-auto"
             >
               <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold">Edit Profile</h2>
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => setProfileTab("edit")}
+                    className={cn("text-xl font-bold transition-colors", profileTab === "edit" ? "text-white" : "text-gray-500")}
+                  >
+                    Edit Profile
+                  </button>
+                  <button 
+                    onClick={() => setProfileTab("favorites")}
+                    className={cn("text-xl font-bold transition-colors", profileTab === "favorites" ? "text-white" : "text-gray-500")}
+                  >
+                    Favorites
+                  </button>
+                </div>
                 <button onClick={() => setIsEditingProfile(false)} className="text-gray-400 hover:text-white">
                   <X size={24} />
                 </button>
               </div>
 
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  <div className="relative group">
-                    <img src={tempAvatar} className="w-24 h-24 rounded-full border-4 border-white/10" alt="avatar" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex items-center justify-center text-[10px] font-bold">
-                      CLICK BELOW
+              {profileTab === "edit" ? (
+                <div className="space-y-4">
+                  <div className="flex justify-center">
+                    <div className="relative group">
+                      <img src={tempAvatar} className="w-24 h-24 rounded-full border-4 border-white/10" alt="avatar" referrerPolicy="no-referrer" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex items-center justify-center text-[10px] font-bold">
+                        CLICK BELOW
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Choose Avatar</label>
-                  <AvatarSelector onSelect={setTempAvatar} />
-                </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Choose Avatar</label>
+                    <AvatarSelector onSelect={setTempAvatar} />
+                  </div>
 
-                <div>
-                  <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Display Name</label>
-                  <input
-                    type="text"
-                    value={tempName}
-                    onChange={(e) => setTempName(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
-                  />
-                </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-2 block uppercase font-bold">Display Name</label>
+                    <input
+                      type="text"
+                      value={tempName}
+                      onChange={(e) => setTempName(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
+                    />
+                  </div>
 
-                <button
-                  onClick={updateProfile}
-                  className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-all"
-                >
-                  Save Changes
-                </button>
-              </div>
+                  <button
+                    onClick={updateProfile}
+                    className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-all"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-sm font-bold text-gray-400 uppercase">Your Favorites</h3>
+                    <button 
+                      onClick={() => {
+                        playFavoriteList();
+                        setIsEditingProfile(false);
+                      }}
+                      className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 hover:bg-gray-200"
+                    >
+                      <Play size={14} /> Play All
+                    </button>
+                  </div>
+                  
+                  {favorites.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <Heart size={48} className="mx-auto mb-4 opacity-20" />
+                      <p>No favorites yet.</p>
+                      <p className="text-sm">Click the heart icon on any song to add it here.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {favorites.map((fav) => (
+                        <div key={fav.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 group">
+                          <img src={fav.thumbnail} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm truncate">{fav.title}</p>
+                            <p className="text-xs text-gray-400 truncate">{fav.artist}</p>
+                          </div>
+                          <button 
+                            onClick={() => handleToggleFavorite(fav)}
+                            className="p-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Heart size={18} className="fill-red-500" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}
