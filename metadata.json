@@ -1,0 +1,5 @@
+{
+  "name": "sync-me",
+  "description": "A real-time watch party and music jam app for syncing YouTube videos and TIDAL music with friends.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,1129 @@
+import React, { useState, useEffect, useRef } from "react";
+import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import socket from "./lib/socket";
+import { User, RoomState, QueueItem, Message } from "./types";
+import { cn, formatTime, generateRoomCode } from "./lib/utils";
+import axios from "axios";
+import confetti from "canvas-confetti";
+
+// --- Components ---
+
+const AvatarSelector = ({ onSelect }: { onSelect: (avatar: string) => void }) => {
+  const avatars = [
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix",
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka",
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Milo",
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Luna",
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Oscar",
+    "https://api.dicebear.com/7.x/avataaars/svg?seed=Zoe",
+  ];
+
+  return (
+    <div className="flex gap-4 flex-wrap justify-center">
+      {avatars.map((url) => (
+        <button
+          key={url}
+          onClick={() => onSelect(url)}
+          className="w-16 h-16 rounded-full overflow-hidden border-2 border-transparent hover:border-white transition-all"
+        >
+          <img src={url} alt="avatar" referrerPolicy="no-referrer" />
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
+  const [name, setName] = useState("");
+  const [avatar, setAvatar] = useState("");
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass p-8 rounded-3xl w-full max-w-md space-y-6"
+      >
+        <h1 className="text-3xl font-bold text-center">Welcome to sync-me</h1>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm text-gray-400 mb-2 block">Choose an Avatar</label>
+            <AvatarSelector onSelect={setAvatar} />
+          </div>
+          {avatar && (
+            <div className="flex justify-center">
+              <img src={avatar} className="w-20 h-20 rounded-full border-2 border-white" alt="selected" referrerPolicy="no-referrer" />
+            </div>
+          )}
+          <div>
+            <label className="text-sm text-gray-400 mb-2 block">Your Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter your name..."
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 transition-all"
+            />
+          </div>
+          <button
+            disabled={!name || !avatar}
+            onClick={() => onComplete({ id: "", name, avatar })}
+            className="w-full bg-white text-black font-bold py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200 transition-all"
+          >
+            Get Started
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: () => void }) => {
+  const [code, setCode] = useState("");
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 space-y-8 md:space-y-12">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="text-center space-y-2 md:space-y-4"
+      >
+        <h1 className="text-4xl md:text-6xl font-black tracking-tighter">sync-me</h1>
+        <p className="text-gray-400 text-base md:text-lg">Watch, Jam, and Play together in real-time.</p>
+      </motion.div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full max-w-4xl">
+        <button onClick={onCreate} className="glass p-6 md:p-8 rounded-3xl hover:bg-white/10 transition-all group text-left space-y-4">
+          <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:bg-white group-hover:text-black transition-all">
+            <Plus size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg md:text-xl font-bold">Create Room</h3>
+            <p className="text-sm text-gray-400">Start a new session and invite friends.</p>
+          </div>
+        </button>
+
+        <div className="glass p-6 md:p-8 rounded-3xl space-y-4 md:col-span-2">
+          <h3 className="text-lg md:text-xl font-bold">Join Room</h3>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="text"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Enter 6-digit code"
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
+            />
+            <button
+              disabled={code.length !== 6}
+              onClick={() => onJoin(code)}
+              className="bg-white text-black font-bold px-8 py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200"
+            >
+              Join
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Main App ---
+
+export default function App() {
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem("sync-me-user");
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [room, setRoom] = useState<RoomState | null>(null);
+  const [activeTab, setActiveTab] = useState<"youtube" | "tidal" | "play">("youtube");
+  const [sidebarTab, setSidebarTab] = useState<"chat" | "queue" | "logs">("chat");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [notifications, setNotifications] = useState<string[]>([]);
+  const [lyrics, setLyrics] = useState<{ lyrics: string; subtitles: string } | null>(null);
+  const [showLyrics, setShowLyrics] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [localTime, setLocalTime] = useState(0);
+  const [audioQuality, setAudioQuality] = useState<"HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW">("HIGH");
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [isJoiningRoom, setIsJoiningRoom] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const savedUser = localStorage.getItem("sync-me-user");
+    return !!(params.get("room") && savedUser);
+  });
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const qualityMenuRef = useRef<HTMLDivElement>(null);
+  const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setSearchResults([]);
+      }
+      if (qualityMenuRef.current && !qualityMenuRef.current.contains(event.target as Node)) {
+        setShowQualityMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const [linkInput, setLinkInput] = useState("");
+
+  const handleLinkPaste = async () => {
+    if (!linkInput) return;
+    try {
+      if (linkInput.includes("youtube.com") || linkInput.includes("youtu.be")) {
+        const videoId = linkInput.split("v=")[1]?.split("&")[0] || linkInput.split("/").pop();
+        if (videoId) {
+          addToQueue({ id: videoId, title: "YouTube Video", author: { name: "Link" }, thumbnail: { url: `https://img.youtube.com/vi/${videoId}/0.jpg` }, duration: 0 });
+        }
+      } else if (linkInput.includes("tidal.com")) {
+        if (linkInput.includes("/playlist/")) {
+          const playlistId = linkInput.split("/playlist/")[1]?.split("?")[0];
+          const res = await axios.get(`https://hifi-api-production.up.railway.app/playlist/?id=${playlistId}`);
+          res.data.items.forEach((item: any) => addToQueue(item.item));
+        } else {
+          const trackId = linkInput.split("/track/")[1]?.split("?")[0];
+          if (trackId) {
+            const res = await axios.get(`https://hifi-api-production.up.railway.app/info/?id=${trackId}`);
+            addToQueue(res.data.data);
+          }
+        }
+      }
+      setLinkInput("");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const cycleRepeatMode = () => {
+    socket.emit("toggle-repeat", { code: room?.code });
+  };
+
+  const parseSubtitles = (subtitles: string) => {
+    if (!subtitles) return [];
+    return subtitles.split("\n").map((line) => {
+      const match = line.match(/\[(\d+):(\d+\.\d+)\](.*)/);
+      if (match) {
+        const time = parseInt(match[1]) * 60 + parseFloat(match[2]);
+        return { time, text: match[3].trim() };
+      }
+      return null;
+    }).filter(Boolean) as { time: number; text: string }[];
+  };
+
+  const parsedLyrics = lyrics ? parseSubtitles(lyrics.subtitles) : [];
+  const currentLyric = parsedLyrics.find((l, i) => {
+    const next = parsedLyrics[i + 1];
+    return localTime >= l.time && (!next || localTime < next.time);
+  });
+
+  const togglePlay = () => {
+    socket.emit("sync-media", { code: room?.code, playing: !room?.currentMedia.playing, currentTime, type: activeTab, user });
+  };
+
+  const skipNext = () => {
+    socket.emit("skip-next", { code: room?.code, user });
+  };
+
+  const skipPrevious = () => {
+    socket.emit("skip-previous", { code: room?.code, user });
+  };
+
+  const toggleShuffle = () => {
+    socket.emit("toggle-shuffle", { code: room?.code });
+  };
+
+  const removeFromQueue = (itemId: string) => {
+    socket.emit("remove-from-queue", { code: room?.code, itemId, user });
+  };
+
+  useEffect(() => {
+    let interval: any;
+    if (room?.currentMedia.playing && room.currentMedia.item?.type === "youtube") {
+      interval = setInterval(() => {
+        setCurrentTime((prev) => {
+          const nextTime = prev + 1;
+          if (room.currentMedia.item?.duration && nextTime >= room.currentMedia.item.duration) {
+            skipNext();
+            return 0;
+          }
+          return nextTime;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [room?.currentMedia.playing, room?.currentMedia.item?.duration, room?.currentMedia.item?.type]);
+
+  useEffect(() => {
+    if (room?.currentMedia.currentTime !== undefined) {
+      setCurrentTime(room.currentMedia.currentTime);
+      if (audioRef.current && room.currentMedia.item?.type === "tidal") {
+        if (Math.abs(audioRef.current.currentTime - room.currentMedia.currentTime) > 2) {
+          audioRef.current.currentTime = room.currentMedia.currentTime;
+        }
+      }
+    }
+  }, [room?.currentMedia.lastUpdated, room?.currentMedia.item?.id]);
+
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalTime(currentTime);
+    }
+  }, [currentTime, isDragging]);
+
+  useEffect(() => {
+    if (showLyrics && currentLyric) {
+      const index = parsedLyrics.findIndex(l => l.time === currentLyric.time);
+      if (index !== -1 && lyricRefs.current[index]) {
+        lyricRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [currentLyric, showLyrics]);
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseInt(e.target.value);
+    setLocalTime(time);
+  };
+
+  const handleSeekEnd = () => {
+    setIsDragging(false);
+    setCurrentTime(localTime);
+    if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
+      audioRef.current.currentTime = localTime;
+    }
+    socket.emit("sync-media", { code: room?.code, playing: room?.currentMedia.playing, currentTime: localTime, type: activeTab, user });
+  };
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    socket.on("init-state", (state: RoomState) => {
+      setRoom(state);
+      setIsJoiningRoom(false);
+      setActiveTab(state.currentMedia.type);
+      // Update URL without refreshing
+      const url = new URL(window.location.href);
+      url.searchParams.set("room", state.code);
+      window.history.replaceState({}, "", url.toString());
+    });
+
+    socket.on("room-update", (state: RoomState) => {
+      setRoom(state);
+      if (state.currentMedia.item?.type === "tidal" && state.currentMedia.item.trackId) {
+        fetchLyrics(state.currentMedia.item.trackId);
+      }
+    });
+
+    socket.on("media-update", (update) => {
+      setRoom((prev) => prev ? { ...prev, currentMedia: { ...prev.currentMedia, ...update } } : null);
+    });
+
+    socket.on("new-message", (msg: Message) => {
+      setRoom((prev) => prev ? { ...prev, messages: [...prev.messages, msg] } : null);
+      if (!showMobileSidebar) {
+        setHasNewMessages(true);
+      }
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    });
+
+    socket.on("new-emoji", (emoji: string) => {
+      spawnEmoji(emoji);
+    });
+
+    socket.on("notification", ({ message }) => {
+      setNotifications((prev) => [...prev, message]);
+      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
+    });
+
+    return () => {
+      socket.off("init-state");
+      socket.off("room-update");
+      socket.off("media-update");
+      socket.off("new-message");
+      socket.off("new-emoji");
+      socket.off("notification");
+    };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomCode = params.get("room");
+
+    if (roomCode && user && !room) {
+      setIsJoiningRoom(true);
+      socket.connect();
+      socket.emit("join-room", { code: roomCode, name: user.name, avatar: user.avatar });
+    }
+  }, [user]); // Run when user is available or changes
+
+  const switchTab = (tab: "youtube" | "tidal" | "play") => {
+    // Logic: YouTube -> Music/Play: Pause video
+    if (activeTab === "youtube" && (tab === "tidal" || tab === "play")) {
+      if (room?.currentMedia.playing) {
+        socket.emit("sync-media", { code: room?.code, playing: false, currentTime, type: activeTab, user });
+      }
+    }
+    // Logic: TIDAL -> YouTube: Pause music
+    if (activeTab === "tidal" && tab === "youtube") {
+      if (room?.currentMedia.playing) {
+        socket.emit("sync-media", { code: room?.code, playing: false, currentTime, type: activeTab, user });
+      }
+    }
+    // Logic: TIDAL -> Play: Keep playing music (no action needed)
+
+    setActiveTab(tab);
+    socket.emit("switch-tab", { code: room?.code, type: tab });
+  };
+
+  const handleUserSetup = (u: User) => {
+    setUser(u);
+    localStorage.setItem("sync-me-user", JSON.stringify(u));
+  };
+
+  const createRoom = () => {
+    const code = generateRoomCode();
+    socket.connect();
+    socket.emit("join-room", { code, name: user?.name, avatar: user?.avatar });
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", code);
+    window.history.replaceState({}, "", url.toString());
+  };
+
+  const joinRoom = (code: string) => {
+    socket.connect();
+    socket.emit("join-room", { code, name: user?.name, avatar: user?.avatar });
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", code);
+    window.history.replaceState({}, "", url.toString());
+  };
+
+  const spawnEmoji = (emoji: string) => {
+    const div = document.createElement("div");
+    div.innerText = emoji;
+    div.style.position = "fixed";
+    div.style.left = Math.random() * 80 + 10 + "%";
+    div.style.bottom = "-50px";
+    div.style.fontSize = "2rem";
+    div.style.pointerEvents = "none";
+    div.style.zIndex = "9999";
+    div.style.transition = "all 3s ease-out";
+    document.body.appendChild(div);
+
+    setTimeout(() => {
+      div.style.transform = `translateY(-${window.innerHeight + 100}px) rotate(${Math.random() * 360}deg)`;
+      div.style.opacity = "0";
+    }, 50);
+
+    setTimeout(() => div.remove(), 3000);
+  };
+
+  const fetchTidalManifest = async (id: string) => {
+    try {
+      const res = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=${audioQuality}`);
+      if (!res.data?.data) {
+        console.error("No data returned from TIDAL track API");
+        return;
+      }
+      
+      const { manifest, manifestMimeType } = res.data.data;
+      
+      if (manifestMimeType === "application/vnd.tidal.bts") {
+        const paddedManifest = manifest.replace(/-/g, '+').replace(/_/g, '/');
+        const missingPadding = (4 - (paddedManifest.length % 4)) % 4;
+        const finalManifest = paddedManifest + "=".repeat(missingPadding);
+        
+        const manifestJson = JSON.parse(atob(finalManifest));
+        if (manifestJson.urls && manifestJson.urls.length > 0) {
+          setAudioUrl(manifestJson.urls[0]);
+        }
+      } else if (manifestMimeType === "application/dash+xml") {
+        // Fallback to HIGH/LOW if DASH is returned and we can't play it
+        const fallbackQuality = audioQuality === "HI_RES_LOSSLESS" || audioQuality === "LOSSLESS" ? "HIGH" : "LOW";
+        const fallbackRes = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=${fallbackQuality}`);
+        if (fallbackRes.data?.data?.manifestMimeType === "application/vnd.tidal.bts") {
+          const m = fallbackRes.data.data.manifest;
+          const padded = m.replace(/-/g, '+').replace(/_/g, '/');
+          const missing = (4 - (padded.length % 4)) % 4;
+          const final = padded + "=".repeat(missing);
+          const json = JSON.parse(atob(final));
+          if (json.urls && json.urls.length > 0) {
+            setAudioUrl(json.urls[0]);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching TIDAL manifest:", err);
+    }
+  };
+
+  const fetchRecommendations = async (id: string) => {
+    try {
+      const res = await axios.get(`https://hifi-api-production.up.railway.app/recommendations/?id=${id}`);
+      if (res.data?.data?.items) {
+        setRecommendations(res.data.data.items.map((i: any) => i.track));
+      }
+    } catch (err) {
+      console.error("Error fetching recommendations:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (room?.currentMedia.item?.type === "tidal" && room.currentMedia.item.trackId) {
+      fetchTidalManifest(room.currentMedia.item.trackId);
+      fetchRecommendations(room.currentMedia.item.trackId);
+    } else {
+      setAudioUrl(null);
+      setRecommendations([]);
+    }
+  }, [room?.currentMedia.item?.id, audioQuality]);
+
+  useEffect(() => {
+    if (audioRef.current && audioUrl) {
+      if (room?.currentMedia.playing) {
+        audioRef.current.play().catch(console.error);
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.currentTime]);
+
+  useEffect(() => {
+    if (audioRef.current && room?.currentMedia.currentTime !== undefined) {
+      const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
+      const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
+      
+      if (Math.abs(audioRef.current.currentTime - targetTime) > 2) {
+        audioRef.current.currentTime = targetTime;
+      }
+    }
+  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl]);
+
+  const searchMedia = async () => {
+    if (!searchQuery) return;
+    setIsSearching(true);
+    setSearchResults([]);
+    try {
+      if (activeTab === "youtube") {
+        const res = await axios.get(`https://yt-search-nine.vercel.app/search?q=${searchQuery}`);
+        // The API might return an array directly or results key
+        const results = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
+        setSearchResults(results);
+      } else if (activeTab === "tidal") {
+        const encodedQuery = encodeURIComponent(searchQuery);
+        const url = `https://hifi-api-production.up.railway.app/search/?s=${encodedQuery}`;
+        console.log("Searching Tidal with URL:", url);
+        const res = await axios.get(url);
+        setSearchResults(res.data.data.items || []);
+      }
+    } catch (err: any) {
+      console.error("Search error:", err);
+      const errorMessage = err.response?.data?.message || err.message || "Unknown error";
+      setNotifications((prev) => [...prev, `Search failed: ${errorMessage}`]);
+      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const addToQueue = (item: any) => {
+    const queueItem: QueueItem = {
+      id: Math.random().toString(36).substring(7),
+      type: activeTab as "youtube" | "tidal",
+      title: item.title || item.name,
+      artist: item.artist?.name || item.author?.name || item.publisher || "Unknown",
+      thumbnail: item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/640x640.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined)),
+      duration: item.duration || 0,
+      addedBy: user?.name || "Guest",
+      videoId: item.id || item.videoId,
+      trackId: item.id || item.trackId,
+    };
+    socket.emit("add-to-queue", { code: room?.code, item: queueItem });
+  };
+
+  const playNow = (item: any) => {
+    const queueItem: QueueItem = {
+      id: Math.random().toString(36).substring(7),
+      type: activeTab as "youtube" | "tidal",
+      title: item.title || item.name,
+      artist: item.artist?.name || item.author?.name || item.publisher || "Unknown",
+      thumbnail: item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/640x640.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined)),
+      duration: item.duration || 0,
+      addedBy: user?.name || "Guest",
+      videoId: item.id || item.videoId,
+      trackId: item.id || item.trackId,
+    };
+    socket.emit("play-now", { code: room?.code, item: queueItem });
+  };
+
+  const sendMessage = (text: string) => {
+    if (!text.trim()) return;
+    socket.emit("send-message", { code: room?.code, text, user });
+  };
+
+  const sendEmoji = (emoji: string) => {
+    socket.emit("send-emoji", { code: room?.code, emoji });
+  };
+
+  const fetchLyrics = async (id: string) => {
+    try {
+      const res = await axios.get(`https://hifi-api-production.up.railway.app/lyrics/?id=${id}`);
+      setLyrics(res.data.lyrics);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (isJoiningRoom) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen space-y-6">
+        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+        <p className="text-gray-400 font-bold animate-pulse">Joining room...</p>
+      </div>
+    );
+  }
+
+  if (!user) return <UserSetup onComplete={handleUserSetup} />;
+  if (!room) return <Home onJoin={joinRoom} onCreate={createRoom} />;
+
+  return (
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#050505]">
+      <audio 
+        ref={audioRef} 
+        src={audioUrl || undefined} 
+        onEnded={skipNext}
+        onTimeUpdate={(e) => {
+          setCurrentTime((e.target as HTMLAudioElement).currentTime);
+        }}
+      />
+      {/* Sidebar - Left (Navigation) */}
+      <div className="w-full md:w-20 h-16 md:h-full glass-dark flex md:flex-col items-center justify-around md:justify-start md:py-8 px-4 md:px-0 gap-4 md:gap-8 z-50 order-last md:order-first border-t md:border-t-0 md:border-r border-white/5">
+        <div className="hidden md:flex w-12 h-12 bg-white text-black rounded-2xl items-center justify-center font-black text-xl">S</div>
+        <div className="flex md:flex-col gap-4 flex-1 items-center justify-center md:justify-start w-full md:w-auto">
+          <button
+            onClick={() => switchTab("youtube")}
+            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "youtube" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+          >
+            <Youtube size={20} className="md:w-6 md:h-6" />
+          </button>
+          <button
+            onClick={() => switchTab("tidal")}
+            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "tidal" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+          >
+            <Music size={20} className="md:w-6 md:h-6" />
+          </button>
+          <button
+            onClick={() => switchTab("play")}
+            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "play" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+          >
+            <Gamepad2 size={20} className="md:w-6 md:h-6" />
+          </button>
+        </div>
+        <div className="flex md:flex-col gap-4 items-center">
+          <button className="w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5">
+            <Share2 size={20} onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications(prev => [...prev, "Link copied!"]); setTimeout(() => setNotifications(prev => prev.slice(1)), 2000); }} />
+          </button>
+          <img src={user.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-2xl border border-white/10" alt="me" referrerPolicy="no-referrer" />
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col relative overflow-hidden">
+        {/* Header */}
+        <header className="h-16 md:h-20 px-4 md:px-8 flex items-center justify-between glass-dark z-40">
+          <div className="flex items-center gap-2 md:gap-4">
+            <h2 className="text-lg md:text-xl font-bold capitalize">{activeTab}</h2>
+            <div className="hidden md:block px-3 py-1 bg-white/5 rounded-full text-xs font-mono text-gray-400 border border-white/5">
+              ROOM: {room.code}
+            </div>
+          </div>
+          <div className="flex-1 max-w-xl mx-4 md:mx-8 relative" ref={searchContainerRef}>
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && searchMedia()}
+                onFocus={() => { if (searchResults.length > 0) setIsSearching(false); }}
+                placeholder={`Search ${activeTab === "youtube" ? "YouTube" : "TIDAL"}...`}
+                className="w-full bg-[#1a1a1a] border border-white/10 rounded-full py-2 pl-10 pr-4 md:py-2.5 md:pl-12 focus:outline-none focus:border-white/20 transition-all text-white text-sm md:text-base"
+              />
+            </div>
+            {/* Search Results Dropdown */}
+            <AnimatePresence>
+              {(searchResults.length > 0 || isSearching) && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute top-full left-0 right-0 mt-2 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50 max-h-[60vh] overflow-y-auto"
+                >
+                  <div className="p-2 flex justify-between items-center border-b border-white/5">
+                    <span className="text-xs text-gray-500 px-2">{isSearching ? "Searching..." : "Results"}</span>
+                    <button onClick={() => setSearchResults([])} className="p-1 hover:bg-white/5 rounded-lg"><X size={14} /></button>
+                  </div>
+                  {isSearching ? (
+                    <div className="p-8 text-center text-gray-500">
+                      <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-2" />
+                      <p className="text-xs">Finding the best matches...</p>
+                    </div>
+                  ) : (
+                    searchResults.map((item: any) => (
+                      <div key={item.id} className="p-3 hover:bg-white/5 flex gap-3 md:gap-4 items-center group">
+                        <img src={item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/80x80.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined))} className="w-10 h-10 md:w-12 md:h-12 rounded-lg object-cover flex-shrink-0" alt="" referrerPolicy="no-referrer" />
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-sm leading-tight mb-0.5 line-clamp-1 md:line-clamp-none">{item.title || item.name}</h4>
+                          <p className="text-xs text-gray-500 truncate">{item.author?.name || item.artist?.name}</p>
+                        </div>
+                        <div className="flex gap-1 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                          <button onClick={() => playNow(item)} className="p-1.5 md:p-2 bg-white text-black rounded-lg"><Play size={12} className="md:w-3.5 md:h-3.5" fill="currentColor" /></button>
+                          <button onClick={() => addToQueue(item)} className="p-1.5 md:p-2 bg-white/10 rounded-lg"><Plus size={12} className="md:w-3.5 md:h-3.5" /></button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex -space-x-2">
+              {room.users.map((u) => (
+                <img key={u.id} src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.name} alt={u.name} referrerPolicy="no-referrer" />
+              ))}
+            </div>
+            <button 
+              className="md:hidden p-2 text-white hover:bg-white/10 rounded-lg transition-colors relative" 
+              onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
+            >
+              <MessageSquare size={20} />
+              {hasNewMessages && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-ping" />
+              )}
+              {hasNewMessages && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+              )}
+            </button>
+          </div>
+        </header>
+
+        {/* Player View */}
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto custom-scrollbar">
+          {/* Link Paste Section */}
+          <div className="mb-8 flex gap-4">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                placeholder="Paste YouTube or TIDAL link here..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 focus:outline-none focus:border-white/20"
+              />
+            </div>
+            <button
+              onClick={handleLinkPaste}
+              className="bg-white/10 hover:bg-white/20 text-white px-6 rounded-xl font-bold transition-all"
+            >
+              Add Link
+            </button>
+          </div>
+
+          {activeTab === "youtube" && (
+            <div className="space-y-8">
+              <div className="w-full aspect-video glass rounded-3xl overflow-hidden relative group">
+                {room.currentMedia.item?.type === "youtube" ? (
+                  <iframe
+                    key={room.currentMedia.item.videoId + room.currentMedia.lastUpdated}
+                    src={`https://www.youtube.com/embed/${room.currentMedia.item.videoId}?autoplay=1&controls=1&rel=0&modestbranding=1&enablejsapi=1`}
+                    className="w-full h-full"
+                    allow="autoplay; encrypted-media"
+                    allowFullScreen
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 space-y-4">
+                    <Youtube size={64} />
+                    <p>Search and play a video to start</p>
+                  </div>
+                )}
+              </div>
+              
+              {room.currentMedia.item?.type === "youtube" && (
+                <div className="glass p-6 rounded-3xl space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-xl font-bold">{room.currentMedia.item.title}</h3>
+                      <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-center gap-4 md:gap-8">
+                    <button 
+                      onClick={toggleShuffle}
+                      className={cn("transition-colors", room.shuffle ? "text-white" : "text-gray-500")}
+                    >
+                      <Shuffle size={20} />
+                    </button>
+                    <button onClick={skipPrevious} className="text-white hover:scale-110 transition-transform"><ChevronLeft size={32} /></button>
+                    <button 
+                      onClick={togglePlay}
+                      className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+                    >
+                      {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
+                    </button>
+                    <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
+                    <button 
+                      onClick={cycleRepeatMode}
+                      className={cn("transition-colors relative", room.repeatMode !== "none" ? "text-white" : "text-gray-500")}
+                    >
+                      <Repeat size={20} />
+                      {room.repeatMode === "one" && <span className="absolute -top-1 -right-1 text-[8px] bg-white text-black rounded-full w-3 h-3 flex items-center justify-center">1</span>}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "tidal" && (
+            <div className="max-w-4xl mx-auto space-y-12">
+              {room.currentMedia.item?.type === "tidal" ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="relative group"
+                  >
+                    <img
+                      src={room.currentMedia.item.thumbnail || undefined}
+                      className="w-full aspect-square rounded-3xl shadow-2xl object-cover"
+                      alt="cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl">
+                      <button onClick={() => setShowLyrics(true)} className="bg-white text-black px-6 py-2 rounded-full font-bold flex items-center gap-2">
+                        <Mic2 size={18} /> Lyrics
+                      </button>
+                    </div>
+                  </motion.div>
+                  <div className="space-y-8">
+                    <div className="space-y-2">
+                      <h1 className="text-4xl font-black tracking-tight">{room.currentMedia.item.title}</h1>
+                      <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <input
+                        type="range"
+                        min="0"
+                        max={room.currentMedia.item.duration || 100}
+                        value={localTime}
+                        onMouseDown={() => setIsDragging(true)}
+                        onTouchStart={() => setIsDragging(true)}
+                        onChange={handleSeek}
+                        onMouseUp={handleSeekEnd}
+                        onTouchEnd={handleSeekEnd}
+                        className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+                      />
+                      <div className="flex justify-between text-xs text-gray-500 font-mono">
+                        <span>{formatTime(localTime)}</span>
+                        <span>{formatTime(room.currentMedia.item.duration)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-4 md:gap-8">
+                      <button 
+                        onClick={toggleShuffle}
+                        className={cn("transition-colors", room.shuffle ? "text-white" : "text-gray-500")}
+                      >
+                        <Shuffle size={20} />
+                      </button>
+                      <button onClick={skipPrevious} className="text-white hover:scale-110 transition-transform"><ChevronLeft size={32} /></button>
+                      <button 
+                        onClick={togglePlay}
+                        className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+                      >
+                        {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
+                      </button>
+                      <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
+                      <button 
+                        onClick={cycleRepeatMode}
+                        className={cn("transition-colors relative", room.repeatMode !== "none" ? "text-white" : "text-gray-500")}
+                      >
+                        <Repeat size={20} />
+                        {room.repeatMode === "one" && <span className="absolute -top-1 -right-1 text-[8px] bg-white text-black rounded-full w-3 h-3 flex items-center justify-center">1</span>}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full h-96 flex flex-col items-center justify-center text-gray-500 space-y-4">
+                  <Music size={64} />
+                  <p>Search and play a song to start jamming</p>
+                </div>
+              )}
+
+              {/* Recommended Section */}
+              {recommendations.length > 0 && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-bold">Recommended for you</h3>
+                  <div className="flex md:grid md:grid-cols-4 gap-4 overflow-x-auto md:overflow-x-visible pb-4 md:pb-0 custom-scrollbar snap-x">
+                    {recommendations.slice(0, 8).map((item, i) => (
+                      <div 
+                        key={i} 
+                        className="glass p-4 rounded-2xl space-y-3 hover:bg-white/5 transition-all group min-w-[160px] md:min-w-0 snap-start"
+                      >
+                        <div className="aspect-square bg-white/5 rounded-xl overflow-hidden relative">
+                          <img 
+                            src={item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/320x320.jpg` : undefined} 
+                            className="w-full h-full object-cover" 
+                            alt="" 
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); addToQueue(item); }}
+                              className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform"
+                            >
+                              <Plus size={20} />
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="font-bold truncate text-sm">{item.title}</h4>
+                          <p className="text-xs text-gray-500 truncate">{item.artist?.name || item.artists?.[0]?.name}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "play" && (
+            <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+              <div className="w-24 h-24 bg-white/5 rounded-3xl flex items-center justify-center text-gray-500">
+                <Gamepad2 size={48} />
+              </div>
+              <h2 className="text-3xl font-black">Coming Soon</h2>
+              <p className="text-gray-400 max-w-md">We're working on real-time games you can play with your friends while watching or listening.</p>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Right Sidebar - Chat/Queue/Logs */}
+      <div className={cn(
+        "w-80 glass-dark flex flex-col z-50 absolute md:relative right-0 top-0 bottom-0 md:bottom-auto md:h-full transition-transform duration-300 shadow-2xl md:shadow-none pb-16 md:pb-0",
+        showMobileSidebar ? "translate-x-0" : "translate-x-full md:translate-x-0"
+      )}>
+        <div className="flex border-b border-white/5 relative items-center">
+          <button
+            onClick={() => setShowMobileSidebar(false)}
+            className="md:hidden p-4 text-gray-500 hover:text-white transition-colors"
+          >
+            <X size={20} />
+          </button>
+          <div className="flex-1 flex">
+            <button
+              onClick={() => setSidebarTab("chat")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "chat" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setSidebarTab("queue")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "queue" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Queue
+            </button>
+            <button
+              onClick={() => setSidebarTab("logs")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "logs" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Logs
+            </button>
+          </div>
+          <div className="relative px-4" ref={qualityMenuRef}>
+            <button 
+              onClick={() => setShowQualityMenu(!showQualityMenu)}
+              className={cn("transition-colors", showQualityMenu ? "text-white" : "text-gray-500 hover:text-white")}
+            >
+              <Volume2 size={18} />
+            </button>
+            <AnimatePresence>
+              {showQualityMenu && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute top-full right-0 mt-2 glass p-2 rounded-xl min-w-[140px] z-[60]"
+                >
+                  <p className="text-[10px] text-gray-500 px-2 mb-1 uppercase font-bold">Audio Quality</p>
+                  {(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => { setAudioQuality(q); setShowQualityMenu(false); }}
+                      className={cn("w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all", audioQuality === q ? "bg-white text-black" : "hover:bg-white/5")}
+                    >
+                      {q.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          {sidebarTab === "chat" && (
+            <div className="flex flex-col h-full">
+              <div className="flex-1 space-y-4">
+                {room.messages.map((msg, i) => (
+                  <div key={i} className={cn("flex gap-3", msg.user.id === socket.id ? "flex-row-reverse" : "")}>
+                    <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                    <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === socket.id ? "bg-white text-black" : "bg-white/5")}>
+                      <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
+                      <p>{msg.text}</p>
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="mt-4 space-y-4">
+                <div className="flex gap-2 justify-center">
+                  {["🔥", "❤️", "😂", "😮", "👏", "🎉", "✨"].map((e) => (
+                    <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
+                  ))}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Type a message..."
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        sendMessage((e.target as HTMLInputElement).value);
+                        (e.target as HTMLInputElement).value = "";
+                      }
+                    }}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
+                  />
+                  <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                    <Send size={18} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sidebarTab === "queue" && (
+            <div className="space-y-4">
+              {room.queue.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 space-y-2">
+                  <ListMusic size={48} className="mx-auto opacity-20" />
+                  <p>Queue is empty</p>
+                </div>
+              ) : (
+                room.queue.map((item, i) => (
+                  <div key={i} className="flex gap-3 items-center group">
+                    <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold truncate">{item.title}</h4>
+                      <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                      <button onClick={() => removeFromQueue(item.id)} className="p-2 hover:bg-red-500/20 text-red-500 rounded-lg">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {sidebarTab === "logs" && (
+            <div className="space-y-3">
+              {room.logs.map((log, i) => (
+                <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
+                  <History size={12} className="mt-0.5 shrink-0" />
+                  <p>{log}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
+        <AnimatePresence>
+          {notifications.map((note, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white text-black px-4 py-2 rounded-full font-bold shadow-2xl flex items-center gap-2 text-xs"
+            >
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+              {note}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Lyrics Modal */}
+      <AnimatePresence>
+        {showLyrics && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-8"
+          >
+            <button onClick={() => setShowLyrics(false)} className="absolute top-8 right-8 p-4 hover:bg-white/10 rounded-full transition-all">
+              <X size={32} />
+            </button>
+            <div className="max-w-2xl w-full text-center space-y-12">
+              <div className="space-y-4">
+                <h2 className="text-5xl font-black">{room.currentMedia.item?.title}</h2>
+                <p className="text-2xl text-gray-400">{room.currentMedia.item?.artist}</p>
+              </div>
+              <div className="h-[60vh] overflow-y-auto custom-scrollbar px-8 space-y-8 text-3xl font-bold text-gray-600 pb-[30vh]">
+                {parsedLyrics.length > 0 ? (
+                  parsedLyrics.map((line, i) => (
+                    <p 
+                      key={i} 
+                      ref={(el) => { lyricRefs.current[i] = el; }}
+                      className={cn("transition-all duration-500", currentLyric?.time === line.time ? "text-white scale-110" : "opacity-30")}
+                    >
+                      {line.text}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-white">No lyrics available for this track.</p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
