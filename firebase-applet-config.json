@@ -1,9 +1,10 @@
 {
-  "apiKey": "AIzaSyD-YOUR-API-KEY",
-  "authDomain": "gen-lang-client-0416641198.firebaseapp.com",
   "projectId": "gen-lang-client-0416641198",
-  "storageBucket": "gen-lang-client-0416641198.appspot.com",
-  "messagingSenderId": "696922081471",
-  "appId": "1:696922081471:web:a1b2c3d4e5f6g7h8i9j0k1",
-  "firestoreDatabaseId": "(default)"
+  "appId": "1:1035926980107:web:db855fc6730e4e15e4e90e",
+  "apiKey": "AIzaSyBSeBDwKTK-TGOyD0k8n0Fea44lNZt9T8A",
+  "authDomain": "gen-lang-client-0416641198.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-6c8cce1d-f918-42d3-8c3a-4a7cc949f73c",
+  "storageBucket": "gen-lang-client-0416641198.firebasestorage.app",
+  "messagingSenderId": "1035926980107",
+  "measurementId": ""
 }

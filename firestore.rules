@@ -1,8 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: rooms
+    // Document ID: 6-digit room code
+    // Fields:
+    //   - code: string (required)
+    //   - users: list of User objects (required)
+    //   - queue: list of MediaItem objects (required)
+    //   - currentMedia: map (required)
+    //   - messages: list of objects (required)
+    //   - logs: list of strings (required)
+    //   - history: list of MediaItem objects (optional)
+    //   - shuffle: bool (optional)
+    //   - repeatMode: string (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidRoom(data) {
+      return data.code is string && data.code.size() == 6 &&
+             data.users is list && data.users.size() <= 100 &&
+             data.queue is list && data.queue.size() <= 500 &&
+             data.messages is list && data.messages.size() <= 1000 &&
+             data.logs is list && data.logs.size() <= 1000 &&
+             data.currentMedia is map &&
+             (!('history' in data) || (data.history is list && data.history.size() <= 100));
+    }
+
     match /rooms/{roomId} {
-      allow read, write: if true; // Prototype: Update to secure rules before launch
+      // For now, allowing anyone to read/write to rooms to maintain functionality
+      // while adding basic structure validation.
+      // In a production app, we would restrict this to authenticated users
+      // and potentially use room ownership logic.
+      allow read: if true;
+      allow create: if isValidRoom(request.resource.data);
+      allow update: if isValidRoom(request.resource.data);
+      allow delete: if false; // Rooms should not be deleted by clients
     }
   }
 }

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
+import { auth, googleProvider } from './firebase';
+import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { User, RoomState, QueueItem, Message } from "./types";
 import { cn, formatTime, generateRoomCode } from "./lib/utils";
 import axios from "axios";
@@ -45,6 +47,28 @@ const AvatarSelector = ({ onSelect }: { onSelect: (avatar: string) => void }) =>
 const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    setIsLoading(true);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      onComplete({
+        id: user.uid,
+        name: user.displayName || "Anonymous",
+        avatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`
+      });
+    } catch (error) {
+      console.error("Google Login Error:", error);
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    setIsLoading(true);
+    onComplete({ id: "", name, avatar });
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -53,7 +77,29 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
         animate={{ opacity: 1, y: 0 }}
         className="glass p-8 rounded-3xl w-full max-w-md space-y-6"
       >
-        <h1 className="text-3xl font-bold text-center">Welcome to sync-me</h1>
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-bold">Welcome to sync-me</h1>
+          <p className="text-gray-400 text-sm">Sign in to start syncing with friends.</p>
+        </div>
+
+        <button
+          onClick={handleGoogleLogin}
+          disabled={isLoading}
+          className="w-full bg-white/5 border border-white/10 text-white font-bold py-3 rounded-xl hover:bg-white/10 transition-all flex items-center justify-center gap-3"
+        >
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+          {isLoading ? "Signing in..." : "Continue with Google"}
+        </button>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-white/10"></span>
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-[#0a0a0a] px-2 text-gray-500">Or use a guest profile</span>
+          </div>
+        </div>
+
         <div className="space-y-4">
           <div>
             <label className="text-sm text-gray-400 mb-2 block">Choose an Avatar</label>
@@ -75,11 +121,15 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
             />
           </div>
           <button
-            disabled={!name || !avatar}
-            onClick={() => onComplete({ id: "", name, avatar })}
-            className="w-full bg-white text-black font-bold py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200 transition-all"
+            disabled={!name || !avatar || isLoading}
+            onClick={handleSubmit}
+            className="w-full bg-white text-black font-bold py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200 transition-all flex items-center justify-center gap-2"
           >
-            Get Started
+            {isLoading ? (
+              <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+            ) : (
+              "Get Started"
+            )}
           </button>
         </div>
       </motion.div>
@@ -89,6 +139,18 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
 
 const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: () => void }) => {
   const [code, setCode] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+
+  const handleCreate = () => {
+    setIsCreating(true);
+    onCreate();
+  };
+
+  const handleJoin = () => {
+    setIsJoining(true);
+    onJoin(code);
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 space-y-8 md:space-y-12">
@@ -102,9 +164,17 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
       </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full max-w-4xl">
-        <button onClick={onCreate} className="glass p-6 md:p-8 rounded-3xl hover:bg-white/10 transition-all group text-left space-y-4">
+        <button 
+          onClick={handleCreate} 
+          disabled={isCreating || isJoining}
+          className="glass p-6 md:p-8 rounded-3xl hover:bg-white/10 transition-all group text-left space-y-4 disabled:opacity-50"
+        >
           <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:bg-white group-hover:text-black transition-all">
-            <Plus size={24} />
+            {isCreating ? (
+              <div className="w-6 h-6 border-2 border-white/20 border-t-white group-hover:border-black/20 group-hover:border-t-black rounded-full animate-spin" />
+            ) : (
+              <Plus size={24} />
+            )}
           </div>
           <div>
             <h3 className="text-lg md:text-xl font-bold">Create Room</h3>
@@ -124,11 +194,15 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
               className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
             />
             <button
-              disabled={code.length !== 6}
-              onClick={() => onJoin(code)}
-              className="bg-white text-black font-bold px-8 py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200"
+              disabled={code.length !== 6 || isJoining || isCreating}
+              onClick={handleJoin}
+              className="bg-white text-black font-bold px-8 py-3 rounded-xl disabled:opacity-50 hover:bg-gray-200 flex items-center justify-center min-w-[100px]"
             >
-              Join
+              {isJoining ? (
+                <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+              ) : (
+                "Join"
+              )}
             </button>
           </div>
         </div>
@@ -372,8 +446,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (room?.code) {
-      const unsubscribe = subscribeToRoom(room.code, (state) => {
+    const params = new URLSearchParams(window.location.search);
+    const roomCodeFromUrl = params.get("room");
+    const targetCode = room?.code || roomCodeFromUrl;
+
+    if (targetCode && user) {
+      const unsubscribe = subscribeToRoom(targetCode, (state) => {
         setRoom(state);
         setIsJoiningRoom(false);
         setActiveTab(state.currentMedia.type);
@@ -389,7 +467,7 @@ export default function App() {
       });
       return () => unsubscribe();
     }
-  }, [room?.code]);
+  }, [room?.code, user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -397,7 +475,10 @@ export default function App() {
 
     if (roomCode && user && !room) {
       setIsJoiningRoom(true);
-      joinRoomService(roomCode, user);
+      joinRoomService(roomCode, user).catch(err => {
+        console.error("Failed to join room from URL:", err);
+        setIsJoiningRoom(false);
+      });
     }
   }, [user]); // Run when user is available or changes
 
@@ -423,14 +504,46 @@ export default function App() {
   };
 
   const handleUserSetup = (u: User) => {
-    setUser(u);
-    localStorage.setItem("sync-me-user", JSON.stringify(u));
+    const userWithId = { ...u, id: u.id || Math.random().toString(36).substring(7) };
+    setUser(userWithId);
+    localStorage.setItem("sync-me-user", JSON.stringify(userWithId));
   };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        const userData: User = {
+          id: firebaseUser.uid,
+          name: firebaseUser.displayName || "Anonymous",
+          avatar: firebaseUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${firebaseUser.uid}`
+        };
+        setUser(userData);
+        localStorage.setItem("sync-me-user", JSON.stringify(userData));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const createRoom = async () => {
     const code = generateRoomCode();
     if (user) {
-      await joinRoomService(code, user);
+      try {
+        await joinRoomService(code, user);
+        setRoom({
+          code,
+          users: [user],
+          queue: [],
+          currentMedia: { item: null, playing: false, currentTime: 0, lastUpdated: Date.now(), type: 'youtube' },
+          messages: [],
+          logs: [],
+          history: [],
+          shuffle: false,
+          repeatMode: 'none'
+        });
+      } catch (error) {
+        console.error("Failed to create room:", error);
+        alert("Failed to create room. Please try again.");
+      }
     }
     const url = new URL(window.location.href);
     url.searchParams.set("room", code);

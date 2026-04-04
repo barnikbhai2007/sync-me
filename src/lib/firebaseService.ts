@@ -3,14 +3,17 @@ import { db } from '../firebase';
 import { RoomState, User, QueueItem, Message } from '../types';
 
 export const joinRoom = async (code: string, user: User) => {
+  console.log("Joining room:", code, user);
   const roomRef = doc(db, 'rooms', code);
   const roomSnap = await getDoc(roomRef);
 
   if (roomSnap.exists()) {
+    console.log("Room exists, updating...");
     await updateDoc(roomRef, {
       users: arrayUnion(user)
     });
   } else {
+    console.log("Room does not exist, creating...");
     const initialState: RoomState = {
       code,
       users: [user],
@@ -23,6 +26,7 @@ export const joinRoom = async (code: string, user: User) => {
       repeatMode: 'none'
     };
     await setDoc(roomRef, initialState);
+    console.log("Room created.");
   }
 };
 

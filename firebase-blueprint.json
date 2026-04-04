@@ -11,17 +11,44 @@
       },
       "required": ["id", "name", "avatar"]
     },
+    "MediaItem": {
+      "title": "MediaItem",
+      "description": "Represents a media item (YouTube video or TIDAL track).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "type": { "type": "string", "enum": ["youtube", "tidal"] },
+        "trackId": { "type": "string" },
+        "artist": { "type": "string" },
+        "duration": { "type": "number" }
+      },
+      "required": ["id", "title", "type"]
+    },
     "Room": {
       "title": "Room",
       "description": "Represents a room where users jam together.",
       "type": "object",
       "properties": {
         "code": { "type": "string", "description": "The room code." },
-        "users": { "type": "array", "description": "List of users in the room." },
-        "queue": { "type": "array", "description": "List of items in the queue." },
-        "messages": { "type": "array", "description": "List of chat messages." },
-        "logs": { "type": "array", "description": "List of room logs." },
-        "currentMedia": { "type": "object", "description": "Currently playing media." }
+        "users": { "type": "array", "items": { "$ref": "User" } },
+        "queue": { "type": "array", "items": { "$ref": "MediaItem" } },
+        "messages": { "type": "array", "items": { "type": "object" } },
+        "logs": { "type": "array", "items": { "type": "string" } },
+        "currentMedia": {
+          "type": "object",
+          "properties": {
+            "item": { "oneOf": [{ "$ref": "MediaItem" }, { "type": "null" }] },
+            "playing": { "type": "boolean" },
+            "currentTime": { "type": "number" },
+            "lastUpdated": { "type": "number" },
+            "type": { "type": "string", "enum": ["youtube", "tidal", "play"] }
+          }
+        },
+        "history": { "type": "array", "items": { "$ref": "MediaItem" } },
+        "shuffle": { "type": "boolean" },
+        "repeatMode": { "type": "string", "enum": ["none", "one", "all"] }
       },
       "required": ["code", "users", "queue", "messages", "logs", "currentMedia"]
     }
