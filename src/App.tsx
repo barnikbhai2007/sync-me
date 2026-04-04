@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
+import socket from "./lib/socket";
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { User, RoomState, QueueItem, Message } from "./types";
@@ -260,33 +261,12 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const [linkInput, setLinkInput] = useState("");
+  const [chatInput, setChatInput] = useState("");
 
-  const handleLinkPaste = async () => {
-    if (!linkInput) return;
-    try {
-      if (linkInput.includes("youtube.com") || linkInput.includes("youtu.be")) {
-        const videoId = linkInput.split("v=")[1]?.split("&")[0] || linkInput.split("/").pop();
-        if (videoId) {
-          addToQueue({ id: videoId, title: "YouTube Video", author: { name: "Link" }, thumbnail: { url: `https://img.youtube.com/vi/${videoId}/0.jpg` }, duration: 0 });
-        }
-      } else if (linkInput.includes("tidal.com")) {
-        if (linkInput.includes("/playlist/")) {
-          const playlistId = linkInput.split("/playlist/")[1]?.split("?")[0];
-          const res = await axios.get(`/api/playlist?id=${playlistId}`);
-          res.data.items.forEach((item: any) => addToQueue(item.item));
-        } else {
-          const trackId = linkInput.split("/track/")[1]?.split("?")[0];
-          if (trackId) {
-            const res = await axios.get(`/api/info?id=${trackId}`);
-            addToQueue(res.data.data);
-          }
-        }
-      }
-      setLinkInput("");
-    } catch (err) {
-      console.error(err);
-    }
+  const handleSendMessage = () => {
+    if (!chatInput.trim()) return;
+    sendMessage(chatInput);
+    setChatInput("");
   };
 
   const cycleRepeatMode = () => {
@@ -316,38 +296,24 @@ export default function App() {
   });
 
   const togglePlay = () => {
-    if (room) {
-      syncMedia(room.code, { ...room.currentMedia, playing: !room.currentMedia.playing });
+    if (room && audioRef.current) {
+      syncMedia(room.code, { 
+        ...room.currentMedia, 
+        playing: !room.currentMedia.playing,
+        currentTime: audioRef.current.currentTime
+      });
     }
   };
 
   const skipNext = () => {
-    if (room && room.queue.length > 0) {
-      let nextItem;
-      if (room.shuffle) {
-        nextItem = room.queue[Math.floor(Math.random() * room.queue.length)];
-      } else {
-        const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
-        nextItem = room.queue[currentIndex + 1] || room.queue[0];
-      }
-      if (nextItem) {
-        syncMedia(room.code, { item: nextItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: nextItem.type });
-      }
+    if (room && user) {
+      socket.emit("skip-next", { code: room.code, user });
     }
   };
 
   const skipPrevious = () => {
-    if (room && room.queue.length > 0) {
-      let prevItem;
-      if (room.shuffle) {
-        prevItem = room.queue[Math.floor(Math.random() * room.queue.length)];
-      } else {
-        const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
-        prevItem = room.queue[currentIndex - 1] || room.queue[room.queue.length - 1];
-      }
-      if (prevItem) {
-        syncMedia(room.code, { item: prevItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: prevItem.type });
-      }
+    if (room && user) {
+      socket.emit("skip-previous", { code: room.code, user });
     }
   };
 
@@ -359,7 +325,8 @@ export default function App() {
 
   const removeFromQueue = (itemId: string) => {
     if (room) {
-      removeFromQueueService(room.code, itemId);
+      const item = room.queue.find(q => q.id === itemId);
+      removeFromQueueService(room.code, itemId, item?.title, user?.name);
     }
   };
 
@@ -464,6 +431,13 @@ export default function App() {
 
     if (targetCode && user) {
       const unsubscribe = subscribeToRoom(targetCode, (state) => {
+        if (room && state.logs.length > room.logs.length) {
+          const newLog = state.logs[state.logs.length - 1];
+          if (!newLog.startsWith("emoji:")) {
+            setNotifications((prev) => [...prev, newLog]);
+            setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
+          }
+        }
         setRoom(state);
         setIsJoiningRoom(false);
         setActiveTab(state.currentMedia.type);
@@ -516,7 +490,17 @@ export default function App() {
         localStorage.setItem("sync-me-user", JSON.stringify(userData));
       }
     });
-    return () => unsubscribe();
+
+    socket.connect();
+    socket.on("new-emoji", (emoji: string) => {
+      spawnEmoji(emoji);
+    });
+
+    return () => {
+      unsubscribe();
+      socket.off("new-emoji");
+      socket.disconnect();
+    };
   }, []);
 
   const createRoom = async () => {
@@ -555,6 +539,7 @@ export default function App() {
   };
 
   const spawnEmoji = (emoji: string) => {
+    console.log("Spawning emoji:", emoji);
     const div = document.createElement("div");
     div.innerText = emoji;
     div.style.position = "fixed";
@@ -563,15 +548,23 @@ export default function App() {
     div.style.fontSize = "2rem";
     div.style.pointerEvents = "none";
     div.style.zIndex = "9999";
-    div.style.transition = "all 3s ease-out";
+    div.style.opacity = "1";
+    div.style.transition = "all 4s cubic-bezier(0.22, 1, 0.36, 1)";
     document.body.appendChild(div);
+    console.log("Emoji element added to body:", div);
+    
+    // Force reflow
+    void div.offsetWidth;
 
-    setTimeout(() => {
-      div.style.transform = `translateY(-${window.innerHeight + 100}px) rotate(${Math.random() * 360}deg)`;
+    const rotation = Math.random() * 180 - 90;
+    const horizontalOffset = Math.random() * 200 - 100;
+
+    requestAnimationFrame(() => {
+      div.style.transform = `translate(${horizontalOffset}px, -${window.innerHeight + 100}px) rotate(${rotation}deg)`;
       div.style.opacity = "0";
-    }, 50);
+    });
 
-    setTimeout(() => div.remove(), 3000);
+    setTimeout(() => div.remove(), 5000);
   };
 
   const fetchTidalManifest = async (id: string) => {
@@ -745,8 +738,6 @@ export default function App() {
     };
     if (room) {
       addToQueueService(room.code, queueItem);
-      setNotifications((prev) => [...prev, "Added to queue"]);
-      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
     }
   };
 
@@ -763,9 +754,7 @@ export default function App() {
       trackId: item.id || item.trackId,
     };
     if (room) {
-      playNowService(room.code, queueItem);
-      setNotifications((prev) => [...prev, "Playing now"]);
-      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
+      playNowService(room.code, queueItem, user?.name);
     }
   };
 
@@ -776,7 +765,12 @@ export default function App() {
 
   const sendEmoji = (emoji: string) => {
     if (room) {
-      sendEmojiService(room.code, emoji);
+      spawnEmoji(emoji);
+      if (socket.connected) {
+        socket.emit("send-emoji", { code: room.code, emoji });
+      } else {
+        sendEmojiService(room.code, emoji);
+      }
     }
   };
 
@@ -818,15 +812,16 @@ export default function App() {
                 <input
                   type="text"
                   placeholder="Type a message..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      sendMessage((e.target as HTMLInputElement).value);
-                      (e.target as HTMLInputElement).value = "";
+                      handleSendMessage();
                     }
                   }}
                   className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
                 />
-                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                <button onClick={handleSendMessage} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
                   <Send size={18} />
                 </button>
               </div>
@@ -868,7 +863,7 @@ export default function App() {
             {room.logs.map((log, i) => (
               <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
                 <History size={12} className="mt-0.5 shrink-0" />
-                <p>{log}</p>
+                <p>{log.startsWith("emoji:") ? log.replace("emoji:", "") : log}</p>
               </div>
             ))}
           </div>
@@ -1067,14 +1062,11 @@ export default function App() {
             <div className="relative flex-1">
               <input
                 type="text"
-                value={linkInput}
-                onChange={(e) => setLinkInput(e.target.value)}
                 placeholder="Paste YouTube or TIDAL link here..."
-                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 focus:outline-none focus:border-white/20"
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
               />
             </div>
             <button
-              onClick={handleLinkPaste}
               className="bg-white/10 hover:bg-white/20 text-white px-6 rounded-xl font-bold transition-all"
             >
               Add Link

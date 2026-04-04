@@ -10,7 +10,8 @@ export const joinRoom = async (code: string, user: User) => {
   if (roomSnap.exists()) {
     console.log("Room exists, updating...");
     await updateDoc(roomRef, {
-      users: arrayUnion(user)
+      users: arrayUnion(user),
+      logs: arrayUnion(`${user.name} joined the room`)
     });
   } else {
     console.log("Room does not exist, creating...");
@@ -20,7 +21,7 @@ export const joinRoom = async (code: string, user: User) => {
       queue: [],
       currentMedia: { item: null, playing: false, currentTime: 0, lastUpdated: Date.now(), type: 'youtube' },
       messages: [],
-      logs: [],
+      logs: [`Room created by ${user.name}`],
       history: [],
       shuffle: false,
       repeatMode: 'none'
@@ -33,7 +34,8 @@ export const joinRoom = async (code: string, user: User) => {
 export const leaveRoom = async (code: string, user: User) => {
   const roomRef = doc(db, 'rooms', code);
   await updateDoc(roomRef, {
-    users: arrayRemove(user)
+    users: arrayRemove(user),
+    logs: arrayUnion(`${user.name} left the room`)
   });
 };
 
@@ -59,25 +61,34 @@ export const updateRoomState = async (code: string, updates: Partial<RoomState>)
 export const addToQueue = async (code: string, item: QueueItem) => {
   const roomRef = doc(db, 'rooms', code);
   await updateDoc(roomRef, {
-    queue: arrayUnion(item)
+    queue: arrayUnion(item),
+    logs: arrayUnion(`${item.addedBy} added ${item.title} to queue`)
   });
 };
 
-export const removeFromQueue = async (code: string, itemId: string) => {
+export const removeFromQueue = async (code: string, itemId: string, title?: string, removedBy?: string) => {
   const roomRef = doc(db, 'rooms', code);
   const roomSnap = await getDoc(roomRef);
   if (roomSnap.exists()) {
     const queue = roomSnap.data().queue;
     const updatedQueue = queue.filter((item: QueueItem) => item.id !== itemId);
-    await updateDoc(roomRef, { queue: updatedQueue });
+    const updates: any = { queue: updatedQueue };
+    if (title && removedBy) {
+      updates.logs = arrayUnion(`${removedBy} removed ${title} from queue`);
+    }
+    await updateDoc(roomRef, updates);
   }
 };
 
-export const playNow = async (code: string, item: QueueItem) => {
+export const playNow = async (code: string, item: QueueItem, playedBy?: string) => {
   const roomRef = doc(db, 'rooms', code);
-  await updateDoc(roomRef, {
+  const updates: any = {
     currentMedia: { item, playing: true, currentTime: 0, lastUpdated: Date.now(), type: item.type }
-  });
+  };
+  if (playedBy) {
+    updates.logs = arrayUnion(`${playedBy} started playing ${item.title}`);
+  }
+  await updateDoc(roomRef, updates);
 };
 
 export const sendEmoji = async (code: string, emoji: string) => {
