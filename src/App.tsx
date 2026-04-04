@@ -495,24 +495,7 @@ export default function App() {
   }, [user]); // Run when user is available or changes
 
   const switchTab = (tab: "youtube" | "tidal" | "play") => {
-    if (room) {
-      // Logic: YouTube -> Music/Play: Pause video
-      if (activeTab === "youtube" && (tab === "tidal" || tab === "play")) {
-        if (room.currentMedia.playing) {
-          syncMedia(room.code, { ...room.currentMedia, playing: false });
-        }
-      }
-      // Logic: TIDAL -> YouTube: Pause music
-      if (activeTab === "tidal" && tab === "youtube") {
-        if (room.currentMedia.playing) {
-          syncMedia(room.code, { ...room.currentMedia, playing: false });
-        }
-      }
-      // Logic: TIDAL -> Play: Keep playing music (no action needed)
-
-      setActiveTab(tab);
-      updateRoomState(room.code, { currentMedia: { ...room.currentMedia, type: tab } });
-    }
+    setActiveTab(tab);
   };
 
   const handleUserSetup = (u: User) => {
@@ -806,6 +789,94 @@ export default function App() {
     }
   };
 
+  const renderSidebarContent = () => {
+    if (!room) return null;
+    
+    return (
+      <>
+        {sidebarTab === "chat" && (
+          <div className="flex flex-col h-full">
+            <div className="flex-1 space-y-4">
+              {room.messages.map((msg, i) => (
+                <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
+                  <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                  <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
+                    <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
+                    <p>{msg.text}</p>
+                  </div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+            <div className="mt-4 space-y-4">
+              <div className="flex gap-2 justify-center">
+                {["🔥", "❤️", "😂", "😮", "👏", "🎉", "✨"].map((e) => (
+                  <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
+                ))}
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Type a message..."
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      sendMessage((e.target as HTMLInputElement).value);
+                      (e.target as HTMLInputElement).value = "";
+                    }
+                  }}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
+                />
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                  <Send size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {sidebarTab === "queue" && (
+          <div className="space-y-4">
+            {room.queue.length === 0 ? (
+              <div className="text-center py-12 text-gray-500 space-y-2">
+                <ListMusic size={48} className="mx-auto opacity-20" />
+                <p>Queue is empty</p>
+              </div>
+            ) : (
+              room.queue.map((item, i) => (
+                <div key={i} className="flex gap-3 items-center group">
+                  <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-bold truncate">{item.title}</h4>
+                    <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
+                  </div>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                    <button onClick={() => removeFromQueue(item.id)} className="p-2 hover:bg-red-500/20 text-red-500 rounded-lg">
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {sidebarTab === "logs" && (
+          <div className="space-y-3">
+            {room.logs.map((log, i) => (
+              <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
+                <History size={12} className="mt-0.5 shrink-0" />
+                <p>{log}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  };
+
   if (isJoiningRoom) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen space-y-6">
@@ -835,7 +906,7 @@ export default function App() {
         <div className="flex md:flex-col gap-4 flex-1 items-center justify-center md:justify-start w-full md:w-auto">
           <button
             onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
-            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+            className={cn("md:hidden w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
           >
             <MessageSquare size={20} className="md:w-6 md:h-6" />
             {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
@@ -1194,7 +1265,65 @@ export default function App() {
         </main>
       </div>
 
-      {/* Right Sidebar - Chat/Queue/Logs (Now a toggleable overlay on all screens) */}
+      {/* Right Sidebar - Desktop (Fixed) */}
+      <div className="hidden md:flex w-80 lg:w-96 glass-dark flex-col border-l border-white/5 relative z-40">
+        <div className="flex border-b border-white/5 relative items-center">
+          <div className="flex-1 flex">
+            <button
+              onClick={() => setSidebarTab("chat")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "chat" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setSidebarTab("queue")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "queue" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Queue
+            </button>
+            <button
+              onClick={() => setSidebarTab("logs")}
+              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "logs" ? "text-white border-b-2 border-white" : "text-gray-500")}
+            >
+              Logs
+            </button>
+          </div>
+          <div className="relative px-4" ref={qualityMenuRef}>
+            <button 
+              onClick={() => setShowQualityMenu(!showQualityMenu)}
+              className={cn("transition-colors", showQualityMenu ? "text-white" : "text-gray-500 hover:text-white")}
+            >
+              <Volume2 size={18} />
+            </button>
+            <AnimatePresence>
+              {showQualityMenu && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute top-full right-0 mt-2 glass p-2 rounded-xl min-w-[140px] z-[80]"
+                >
+                  <p className="text-[10px] text-gray-500 px-2 mb-1 uppercase font-bold">Audio Quality</p>
+                  {(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => { setAudioQuality(q); setShowQualityMenu(false); }}
+                      className={cn("w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all", audioQuality === q ? "bg-white text-black" : "hover:bg-white/5")}
+                    >
+                      {q.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          {renderSidebarContent()}
+        </div>
+      </div>
+
+      {/* Right Sidebar - Mobile (Overlay) */}
       <AnimatePresence>
         {showMobileSidebar && (
           <>
@@ -1204,14 +1333,14 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowMobileSidebar(false)}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]"
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] md:hidden"
             />
             <motion.div
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed right-0 top-0 bottom-0 w-full sm:w-96 glass-dark flex flex-col z-[70] shadow-2xl border-l border-white/5"
+              className="fixed right-0 top-0 bottom-0 w-full sm:w-96 glass-dark flex flex-col z-[70] shadow-2xl border-l border-white/5 md:hidden"
             >
               <div className="flex border-b border-white/5 relative items-center">
                 <button
@@ -1240,117 +1369,10 @@ export default function App() {
                     Logs
                   </button>
                 </div>
-                <div className="relative px-4" ref={qualityMenuRef}>
-                  <button 
-                    onClick={() => setShowQualityMenu(!showQualityMenu)}
-                    className={cn("transition-colors", showQualityMenu ? "text-white" : "text-gray-500 hover:text-white")}
-                  >
-                    <Volume2 size={18} />
-                  </button>
-                  <AnimatePresence>
-                    {showQualityMenu && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="absolute top-full right-0 mt-2 glass p-2 rounded-xl min-w-[140px] z-[80]"
-                      >
-                        <p className="text-[10px] text-gray-500 px-2 mb-1 uppercase font-bold">Audio Quality</p>
-                        {(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const).map((q) => (
-                          <button
-                            key={q}
-                            onClick={() => { setAudioQuality(q); setShowQualityMenu(false); }}
-                            className={cn("w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all", audioQuality === q ? "bg-white text-black" : "hover:bg-white/5")}
-                          >
-                            {q.replace(/_/g, ' ')}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                {sidebarTab === "chat" && (
-                  <div className="flex flex-col h-full">
-                    <div className="flex-1 space-y-4">
-                      {room.messages.map((msg, i) => (
-                        <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
-                          <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
-                          <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
-                            <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
-                            <p>{msg.text}</p>
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={chatEndRef} />
-                    </div>
-                    <div className="mt-4 space-y-4">
-                      <div className="flex gap-2 justify-center">
-                        {["🔥", "❤️", "😂", "😮", "👏", "🎉", "✨"].map((e) => (
-                          <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
-                        ))}
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Type a message..."
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              sendMessage((e.target as HTMLInputElement).value);
-                              (e.target as HTMLInputElement).value = "";
-                            }
-                          }}
-                          className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
-                        />
-                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
-                          <Send size={18} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {sidebarTab === "queue" && (
-                  <div className="space-y-4">
-                    {room.queue.length === 0 ? (
-                      <div className="text-center py-12 text-gray-500 space-y-2">
-                        <ListMusic size={48} className="mx-auto opacity-20" />
-                        <p>Queue is empty</p>
-                      </div>
-                    ) : (
-                      room.queue.map((item, i) => (
-                        <div key={i} className="flex gap-3 items-center group">
-                          <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-sm font-bold truncate">{item.title}</h4>
-                            <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
-                          </div>
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                            <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
-                              <Play size={14} fill="currentColor" />
-                            </button>
-                            <button onClick={() => removeFromQueue(item.id)} className="p-2 hover:bg-red-500/20 text-red-500 rounded-lg">
-                              <X size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {sidebarTab === "logs" && (
-                  <div className="space-y-3">
-                    {room.logs.map((log, i) => (
-                      <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
-                        <History size={12} className="mt-0.5 shrink-0" />
-                        <p>{log}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {renderSidebarContent()}
               </div>
             </motion.div>
           </>
