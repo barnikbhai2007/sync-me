@@ -271,12 +271,12 @@ export default function App() {
       } else if (linkInput.includes("tidal.com")) {
         if (linkInput.includes("/playlist/")) {
           const playlistId = linkInput.split("/playlist/")[1]?.split("?")[0];
-          const res = await axios.get(`https://hifi-api-production.up.railway.app/playlist/?id=${playlistId}`);
+          const res = await axios.get(`/api/playlist?id=${playlistId}`);
           res.data.items.forEach((item: any) => addToQueue(item.item));
         } else {
           const trackId = linkInput.split("/track/")[1]?.split("?")[0];
           if (trackId) {
-            const res = await axios.get(`https://hifi-api-production.up.railway.app/info/?id=${trackId}`);
+            const res = await axios.get(`/api/info?id=${trackId}`);
             addToQueue(res.data.data);
           }
         }
@@ -581,7 +581,7 @@ export default function App() {
 
   const fetchTidalManifest = async (id: string) => {
     try {
-      const res = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=${audioQuality}`);
+      const res = await axios.get(`/api/track?id=${id}&quality=${audioQuality}`);
       if (!res.data?.data) {
         console.error("No data returned from TIDAL track API");
         return;
@@ -600,6 +600,9 @@ export default function App() {
             await shakaPlayerRef.current.unload();
           }
           setAudioUrl(manifestJson.urls[0]);
+          if (audioRef.current) {
+            audioRef.current.load();
+          }
         }
       } else if (manifestMimeType === "application/dash+xml") {
         const paddedManifest = manifest.replace(/-/g, '+').replace(/_/g, '/');
@@ -617,7 +620,7 @@ export default function App() {
           } catch (err) {
             console.error("Shaka load error:", err);
             // Fallback to HIGH if DASH fails
-            const fallbackRes = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}&quality=HIGH`);
+            const fallbackRes = await axios.get(`/api/track?id=${id}&quality=HIGH`);
             if (fallbackRes.data?.data?.manifestMimeType === "application/vnd.tidal.bts") {
               const m = fallbackRes.data.data.manifest;
               const p = m.replace(/-/g, '+').replace(/_/g, '/');
@@ -638,7 +641,7 @@ export default function App() {
 
   const fetchRecommendations = async (id: string) => {
     try {
-      const res = await axios.get(`https://hifi-api-production.up.railway.app/recommendations/?id=${id}`);
+      const res = await axios.get(`/api/recommendations?id=${id}`);
       if (res.data?.data?.items) {
         setRecommendations(res.data.data.items.map((i: any) => i.track));
       }
@@ -658,7 +661,7 @@ export default function App() {
   }, [room?.currentMedia.item?.id, audioQuality]);
 
   useEffect(() => {
-    if (audioRef.current && audioUrl) {
+    if (audioRef.current) {
       if (room?.currentMedia.playing) {
         audioRef.current.play().catch(console.error);
       } else {
@@ -676,7 +679,7 @@ export default function App() {
         audioRef.current.currentTime = targetTime;
       }
     }
-  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl]);
+  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl, room?.currentMedia.playing]);
 
   const searchMedia = async () => {
     if (!searchQuery) return;
@@ -760,7 +763,7 @@ export default function App() {
 
   const fetchLyrics = async (id: string) => {
     try {
-      const res = await axios.get(`https://hifi-api-production.up.railway.app/lyrics/?id=${id}`);
+      const res = await axios.get(`/api/lyrics?id=${id}`);
       setLyrics(res.data.lyrics);
     } catch (err) {
       console.error(err);
@@ -784,6 +787,7 @@ export default function App() {
       <audio 
         ref={audioRef} 
         src={audioUrl || undefined} 
+        crossOrigin="anonymous"
         onEnded={skipNext}
         onTimeUpdate={(e) => {
           setCurrentTime((e.target as HTMLAudioElement).currentTime);

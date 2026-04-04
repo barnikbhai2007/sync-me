@@ -328,6 +328,66 @@ app.get("/api/search/tidal", async (req, res) => {
   res.status(500).json({ error: "Tidal search failed on all endpoints" });
 });
 
+app.get("/api/track", async (req, res) => {
+  const { id, quality } = req.query;
+  if (!id) return res.status(400).json({ error: "Track ID required" });
+  try {
+    const url = `https://hifi-api-production.up.railway.app/track/?id=${id}&quality=${quality || "HIGH"}`;
+    const response = await axios.get(url);
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch track manifest" });
+  }
+});
+
+app.get("/api/recommendations", async (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ error: "Track ID required" });
+  try {
+    const url = `https://hifi-api-production.up.railway.app/recommendations/?id=${id}`;
+    const response = await axios.get(url);
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch recommendations" });
+  }
+});
+
+app.get("/api/playlist", async (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ error: "Playlist ID required" });
+  try {
+    const url = `https://hifi-api-production.up.railway.app/playlist/?id=${id}`;
+    const response = await axios.get(url);
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch playlist" });
+  }
+});
+
+app.get("/api/info", async (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ error: "Track ID required" });
+  try {
+    const url = `https://hifi-api-production.up.railway.app/info/?id=${id}`;
+    const response = await axios.get(url);
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch track info" });
+  }
+});
+
+app.get("/api/lyrics", async (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ error: "Track ID required" });
+  try {
+    const url = `https://hifi-api-production.up.railway.app/lyrics/?id=${id}`;
+    const response = await axios.get(url);
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch lyrics" });
+  }
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
