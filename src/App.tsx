@@ -3,6 +3,7 @@ import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, M
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
+import YouTube from 'react-youtube';
 
 // --- Mood Background ---
 const MoodBackground = ({ mood }: { mood: string }) => {
@@ -327,25 +328,110 @@ export default function App() {
   });
 
   const togglePlay = () => {
-    if (room && audioRef.current) {
+    if (room) {
+      let currentTime = 0;
+      if (room.currentMedia.item?.type === "tidal" && audioRef.current) {
+        currentTime = audioRef.current.currentTime;
+      } else if (room.currentMedia.item?.type === "youtube" && youtubePlayerRef.current) {
+        currentTime = youtubePlayerRef.current.getCurrentTime() || 0;
+      }
+      
       syncMedia(room.code, { 
         ...room.currentMedia, 
         playing: !room.currentMedia.playing,
-        currentTime: audioRef.current.currentTime
+        currentTime: currentTime
       });
     }
   };
 
   const skipNext = () => {
-    if (room && user) {
-      socket.emit("skip-next", { code: room.code, user });
+    if (!room) return;
+    
+    let nextItem: any = null;
+    let newQueue = [...room.queue];
+    let newHistory = [...room.history];
+
+    if (room.repeatMode === "one" && room.currentMedia.item) {
+      nextItem = { ...room.currentMedia.item };
+    } else if (newQueue.length > 0) {
+      nextItem = room.shuffle 
+        ? newQueue.splice(Math.floor(Math.random() * newQueue.length), 1)[0]
+        : newQueue.shift()!;
+    } else if (room.repeatMode === "all" && (newHistory.length > 0 || room.currentMedia.item)) {
+      const allItems = [...newHistory];
+      if (room.currentMedia.item) allItems.push(room.currentMedia.item);
+      
+      if (allItems.length === 1) {
+        nextItem = { ...allItems[0] };
+      } else {
+        newQueue = allItems;
+        newHistory = [];
+        nextItem = room.shuffle 
+          ? newQueue.splice(Math.floor(Math.random() * newQueue.length), 1)[0]
+          : newQueue.shift()!;
+      }
+    }
+
+    if (nextItem) {
+      if (room.currentMedia.item && room.repeatMode !== "one" && room.repeatMode !== "all") {
+        newHistory.push(room.currentMedia.item);
+      } else if (room.currentMedia.item && room.repeatMode === "all" && newQueue.length > 0) {
+        newHistory.push(room.currentMedia.item);
+      }
+      
+      updateRoomState(room.code, {
+        queue: newQueue,
+        history: newHistory,
+        currentMedia: {
+          item: nextItem,
+          playing: true,
+          currentTime: 0,
+          lastUpdated: Date.now(),
+          type: nextItem.type
+        },
+        logs: [...room.logs, `${user?.name || "Someone"} skipped to next: ${nextItem.title}`]
+      });
+    } else {
+      if (room.currentMedia.item) {
+        newHistory.push(room.currentMedia.item);
+      }
+      updateRoomState(room.code, {
+        queue: newQueue,
+        history: newHistory,
+        currentMedia: {
+          item: null,
+          playing: false,
+          currentTime: 0,
+          lastUpdated: Date.now(),
+          type: "youtube"
+        }
+      });
     }
   };
 
   const skipPrevious = () => {
-    if (room && user) {
-      socket.emit("skip-previous", { code: room.code, user });
+    if (!room || room.history.length === 0) return;
+    
+    const newHistory = [...room.history];
+    const prevItem = newHistory.pop()!;
+    const newQueue = [...room.queue];
+    
+    if (room.currentMedia.item) {
+      newQueue.unshift(room.currentMedia.item);
     }
+    
+    updateRoomState(room.code, {
+      queue: newQueue,
+      history: newHistory,
+      currentMedia: {
+        item: prevItem,
+        playing: true,
+        currentTime: 0,
+        lastUpdated: Date.now(),
+        type: prevItem.type
+      },
+      logs: [...room.logs, `${user?.name || "Someone"} went back to: ${prevItem.title}`]
+    });
   };
 
   const toggleShuffle = () => {
@@ -412,8 +498,10 @@ export default function App() {
   const handleSeekEnd = () => {
     setIsDragging(false);
     setCurrentTime(localTime);
-    if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
+    if (room?.currentMedia.item?.type === "tidal" && audioRef.current) {
       audioRef.current.currentTime = localTime;
+    } else if (room?.currentMedia.item?.type === "youtube" && youtubePlayerRef.current) {
+      youtubePlayerRef.current.seekTo(localTime, true);
     }
     if (room) {
       syncMedia(room.code, { ...room.currentMedia, currentTime: localTime });
@@ -423,6 +511,7 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const youtubePlayerRef = useRef<any>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [tempName, setTempName] = useState("");
   const [tempAvatar, setTempAvatar] = useState("");
@@ -501,6 +590,9 @@ export default function App() {
 
   const switchTab = (tab: "youtube" | "tidal" | "play") => {
     setActiveTab(tab);
+    if (room && room.currentMedia.playing && room.currentMedia.item?.type !== tab) {
+      syncMedia(room.code, { ...room.currentMedia, playing: false });
+    }
   };
 
   const handleUserSetup = (u: User) => {
@@ -695,10 +787,10 @@ export default function App() {
   }, [room?.currentMedia.item?.id, audioQuality]);
 
   useEffect(() => {
-    if (audioRef.current) {
+    if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
       if (room?.currentMedia.playing && !isLoadingManifest) {
         // Only attempt to play if we have a source or if it's DASH (Shaka)
-        if (audioUrl || (room.currentMedia.item?.type === "tidal" && shakaPlayerRef.current)) {
+        if (audioUrl || shakaPlayerRef.current) {
           audioRef.current.play().catch((err) => {
             console.warn("Playback failed:", err);
           });
@@ -706,16 +798,42 @@ export default function App() {
       } else {
         audioRef.current.pause();
       }
+    } else if (youtubePlayerRef.current && room?.currentMedia.item?.type === "youtube") {
+      if (room?.currentMedia.playing) {
+        youtubePlayerRef.current.playVideo();
+      } else {
+        youtubePlayerRef.current.pauseVideo();
+      }
     }
   }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.item?.id, isLoadingManifest]);
 
   useEffect(() => {
-    if (audioRef.current && room?.currentMedia.currentTime !== undefined && !isLoadingManifest) {
+    let interval: any;
+    if (room?.currentMedia.item?.type === "youtube" && room.currentMedia.playing) {
+      interval = setInterval(() => {
+        if (youtubePlayerRef.current && !isDragging) {
+          const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
+          setCurrentTime(ytTime);
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [room?.currentMedia.item?.type, room?.currentMedia.playing, isDragging]);
+
+  useEffect(() => {
+    if (room?.currentMedia.currentTime !== undefined && !isLoadingManifest) {
       const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
       const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
       
-      if (Math.abs(audioRef.current.currentTime - targetTime) > 2) {
-        audioRef.current.currentTime = targetTime;
+      if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
+        if (Math.abs(audioRef.current.currentTime - targetTime) > 2) {
+          audioRef.current.currentTime = targetTime;
+        }
+      } else if (youtubePlayerRef.current && room?.currentMedia.item?.type === "youtube") {
+        const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
+        if (Math.abs(ytTime - targetTime) > 2) {
+          youtubePlayerRef.current.seekTo(targetTime, true);
+        }
       }
     }
   }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl, room?.currentMedia.playing, isLoadingManifest]);
@@ -1113,34 +1231,120 @@ export default function App() {
             </button>
           </div>
 
-          {activeTab === "youtube" && (
+          {room.currentMedia.item?.type === "youtube" ? (
             <div className="space-y-8">
               <div className="w-full aspect-video glass rounded-3xl overflow-hidden relative group">
-                {room.currentMedia.item?.type === "youtube" ? (
-                  <iframe
-                    key={room.currentMedia.item.videoId + room.currentMedia.lastUpdated}
-                    src={`https://www.youtube.com/embed/${room.currentMedia.item.videoId}?autoplay=1&controls=1&rel=0&modestbranding=1&enablejsapi=1`}
-                    className="w-full h-full"
-                    allow="autoplay; encrypted-media"
-                    allowFullScreen
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 space-y-4">
-                    <Youtube size={64} />
-                    <p>Search and play a video to start</p>
-                  </div>
-                )}
+                <YouTube
+                  videoId={room.currentMedia.item.videoId}
+                  opts={{
+                    width: '100%',
+                    height: '100%',
+                    playerVars: {
+                      autoplay: 1,
+                      controls: 1,
+                      rel: 0,
+                      modestbranding: 1,
+                    },
+                  }}
+                  onReady={(e) => {
+                    youtubePlayerRef.current = e.target;
+                    if (room.currentMedia.playing) {
+                      e.target.playVideo();
+                    } else {
+                      e.target.pauseVideo();
+                    }
+                  }}
+                  onStateChange={(e) => {
+                    if (e.data === YouTube.PlayerState.ENDED) {
+                      skipNext();
+                    } else if (e.data === YouTube.PlayerState.PLAYING && !room.currentMedia.playing) {
+                      syncMedia(room.code, { ...room.currentMedia, playing: true, currentTime: e.target.getCurrentTime() });
+                    } else if (e.data === YouTube.PlayerState.PAUSED && room.currentMedia.playing) {
+                      syncMedia(room.code, { ...room.currentMedia, playing: false, currentTime: e.target.getCurrentTime() });
+                    }
+                  }}
+                  className="w-full h-full absolute inset-0"
+                />
               </div>
               
-              {room.currentMedia.item?.type === "youtube" && (
-                <div className="glass p-6 rounded-3xl space-y-6">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="text-xl font-bold">{room.currentMedia.item.title}</h3>
-                      <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
+              <div className="glass p-6 rounded-3xl space-y-6">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xl font-bold">{room.currentMedia.item.title}</h3>
+                    <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-center gap-4 md:gap-8">
+                  <button 
+                    onClick={toggleShuffle}
+                    className={cn("transition-colors", room.shuffle ? "text-white" : "text-gray-500")}
+                  >
+                    <Shuffle size={20} />
+                  </button>
+                  <button onClick={skipPrevious} className="text-white hover:scale-110 transition-transform"><ChevronLeft size={32} /></button>
+                  <button 
+                    onClick={togglePlay}
+                    className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+                  >
+                    {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
+                  </button>
+                  <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
+                  <button 
+                    onClick={cycleRepeatMode}
+                    className={cn("transition-colors relative", room.repeatMode !== "none" ? "text-white" : "text-gray-500")}
+                  >
+                    <Repeat size={20} />
+                    {room.repeatMode === "one" && <span className="absolute -top-1 -right-1 text-[8px] bg-white text-black rounded-full w-3 h-3 flex items-center justify-center">1</span>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : room.currentMedia.item?.type === "tidal" ? (
+            <div className="max-w-4xl mx-auto space-y-12">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="relative group"
+                >
+                  <img
+                    src={room.currentMedia.item.thumbnail || undefined}
+                    className="w-full aspect-square rounded-3xl shadow-2xl object-cover"
+                    alt="cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl">
+                    <button onClick={() => setShowLyrics(true)} className="bg-white text-black px-6 py-2 rounded-full font-bold flex items-center gap-2">
+                      <Mic2 size={18} /> Lyrics
+                    </button>
+                  </div>
+                </motion.div>
+                <div className="space-y-8">
+                  <div className="space-y-2">
+                    <h1 className="text-4xl font-black tracking-tight">{room.currentMedia.item.title}</h1>
+                    <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <input
+                      type="range"
+                      min="0"
+                      max={room.currentMedia.item.duration || 100}
+                      value={localTime}
+                      onMouseDown={() => setIsDragging(true)}
+                      onTouchStart={() => setIsDragging(true)}
+                      onChange={handleSeek}
+                      onMouseUp={handleSeekEnd}
+                      onTouchEnd={handleSeekEnd}
+                      className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 font-mono">
+                      <span>{formatTime(localTime)}</span>
+                      <span>{formatTime(room.currentMedia.item.duration)}</span>
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center justify-center gap-4 md:gap-8">
                     <button 
                       onClick={toggleShuffle}
@@ -1165,90 +1369,25 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
-          )}
+          ) : activeTab === "youtube" ? (
+            <div className="w-full aspect-video glass rounded-3xl overflow-hidden relative group">
+              <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 space-y-4">
+                <Youtube size={64} />
+                <p>Search and play a video to start</p>
+              </div>
+            </div>
+          ) : activeTab === "tidal" ? (
+            <div className="w-full h-96 flex flex-col items-center justify-center text-gray-500 space-y-4">
+              <Music size={64} />
+              <p>Search and play a song to start jamming</p>
+            </div>
+          ) : null}
 
-          {activeTab === "tidal" && (
-            <div className="max-w-4xl mx-auto space-y-12">
-              {room.currentMedia.item?.type === "tidal" ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-                  <motion.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="relative group"
-                  >
-                    <img
-                      src={room.currentMedia.item.thumbnail || undefined}
-                      className="w-full aspect-square rounded-3xl shadow-2xl object-cover"
-                      alt="cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl">
-                      <button onClick={() => setShowLyrics(true)} className="bg-white text-black px-6 py-2 rounded-full font-bold flex items-center gap-2">
-                        <Mic2 size={18} /> Lyrics
-                      </button>
-                    </div>
-                  </motion.div>
-                  <div className="space-y-8">
-                    <div className="space-y-2">
-                      <h1 className="text-4xl font-black tracking-tight">{room.currentMedia.item.title}</h1>
-                      <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
-                    </div>
+          {/* Recommended Section */}
+          {activeTab === "tidal" && recommendations.length > 0 && (
 
-                    <div className="space-y-4">
-                      <input
-                        type="range"
-                        min="0"
-                        max={room.currentMedia.item.duration || 100}
-                        value={localTime}
-                        onMouseDown={() => setIsDragging(true)}
-                        onTouchStart={() => setIsDragging(true)}
-                        onChange={handleSeek}
-                        onMouseUp={handleSeekEnd}
-                        onTouchEnd={handleSeekEnd}
-                        className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
-                      />
-                      <div className="flex justify-between text-xs text-gray-500 font-mono">
-                        <span>{formatTime(localTime)}</span>
-                        <span>{formatTime(room.currentMedia.item.duration)}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-4 md:gap-8">
-                      <button 
-                        onClick={toggleShuffle}
-                        className={cn("transition-colors", room.shuffle ? "text-white" : "text-gray-500")}
-                      >
-                        <Shuffle size={20} />
-                      </button>
-                      <button onClick={skipPrevious} className="text-white hover:scale-110 transition-transform"><ChevronLeft size={32} /></button>
-                      <button 
-                        onClick={togglePlay}
-                        className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
-                      >
-                        {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
-                      </button>
-                      <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
-                      <button 
-                        onClick={cycleRepeatMode}
-                        className={cn("transition-colors relative", room.repeatMode !== "none" ? "text-white" : "text-gray-500")}
-                      >
-                        <Repeat size={20} />
-                        {room.repeatMode === "one" && <span className="absolute -top-1 -right-1 text-[8px] bg-white text-black rounded-full w-3 h-3 flex items-center justify-center">1</span>}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full h-96 flex flex-col items-center justify-center text-gray-500 space-y-4">
-                  <Music size={64} />
-                  <p>Search and play a song to start jamming</p>
-                </div>
-              )}
-
-              {/* Recommended Section */}
-              {recommendations.length > 0 && (
                 <div className="space-y-6">
                   <h3 className="text-xl font-bold">Recommended for you</h3>
                   <div className="flex md:grid md:grid-cols-4 gap-4 overflow-x-auto md:overflow-x-visible pb-4 md:pb-0 custom-scrollbar snap-x">
@@ -1282,8 +1421,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </div>
-          )}
 
           {activeTab === "play" && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
