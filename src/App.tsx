@@ -1,7 +1,37 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
+import { GoogleGenAI, Type } from "@google/genai";
+import { motion, AnimatePresence } from "motion/react";
+
+// --- Mood Background ---
+const MoodBackground = ({ mood }: { mood: string }) => {
+  const colors = {
+    happy: ["#FFD700", "#FF8C00", "#FF4500"],
+    sad: ["#4682B4", "#191970", "#00008B"],
+    energetic: ["#FF00FF", "#00FFFF", "#7FFF00"],
+    calm: ["#98FB98", "#AFEEEE", "#E0FFFF"],
+    default: ["#333333", "#111111", "#000000"],
+  };
+
+  const selectedColors = (colors as any)[mood] || colors.default;
+
+  return (
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+      <motion.div
+        className="absolute inset-0 opacity-20"
+        animate={{
+          background: [
+            `radial-gradient(circle at 20% 30%, ${selectedColors[0]}, transparent)`,
+            `radial-gradient(circle at 80% 70%, ${selectedColors[1]}, transparent)`,
+            `radial-gradient(circle at 50% 50%, ${selectedColors[2]}, transparent)`,
+          ],
+        }}
+        transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
+      />
+    </div>
+  );
+};
 import socket from "./lib/socket";
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
@@ -233,6 +263,7 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [localTime, setLocalTime] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW">("HIGH");
+  const [mood, setMood] = useState("default");
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [isJoiningRoom, setIsJoiningRoom] = useState(() => {
@@ -778,6 +809,14 @@ export default function App() {
     try {
       const res = await axios.get(`/api/lyrics?id=${id}`);
       setLyrics(res.data.lyrics);
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Analyze the mood of these lyrics and return only one word: happy, sad, energetic, or calm. Lyrics: ${res.data.lyrics.lyrics.substring(0, 500)}`,
+      });
+      const mood = response.text?.trim().toLowerCase() || "default";
+      setMood(mood);
     } catch (err) {
       console.error(err);
     }
@@ -886,6 +925,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#050505]">
+      <MoodBackground mood={mood} />
       <audio 
         ref={audioRef} 
         src={audioUrl || undefined} 
