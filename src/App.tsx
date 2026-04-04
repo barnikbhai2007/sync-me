@@ -685,15 +685,44 @@ export default function App() {
     try {
       if (activeTab === "youtube") {
         const res = await axios.get(`https://yt-search-nine.vercel.app/search?q=${searchQuery}`);
-        // The API might return an array directly or results key
         const results = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
         setSearchResults(results);
       } else if (activeTab === "tidal") {
         const encodedQuery = encodeURIComponent(searchQuery);
-        const url = `https://hifi-api-production.up.railway.app/search/?s=${encodedQuery}`;
-        console.log("Searching Tidal with URL:", url);
-        const res = await axios.get(url);
-        setSearchResults(res.data.data.items || []);
+        // Try multiple potential API shapes/endpoints if one fails
+        const endpoints = [
+          `https://hifi-api-production.up.railway.app/search/?s=${encodedQuery}`,
+          `https://tidal-api-sigma.vercel.app/search?q=${encodedQuery}` // Potential fallback
+        ];
+        
+        let results = [];
+        let success = false;
+        
+        for (const endpoint of endpoints) {
+          try {
+            console.log("Searching Tidal with URL:", endpoint);
+            const res = await axios.get(endpoint, { timeout: 5000 });
+            const data = res.data;
+            
+            if (data?.data?.items) results = data.data.items;
+            else if (data?.items) results = data.items;
+            else if (Array.isArray(data?.data)) results = data.data;
+            else if (Array.isArray(data)) results = data;
+            
+            if (results.length > 0) {
+              success = true;
+              break;
+            }
+          } catch (e) {
+            console.warn(`Search failed for ${endpoint}:`, e);
+          }
+        }
+        
+        setSearchResults(Array.isArray(results) ? results : []);
+        if (!success) {
+          setNotifications((prev) => [...prev, "Tidal search returned no results."]);
+          setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
+        }
       }
     } catch (err: any) {
       console.error("Search error:", err);
@@ -803,12 +832,20 @@ export default function App() {
           >
             <Gamepad2 size={20} className="md:w-6 md:h-6" />
           </button>
+          <div className="w-px h-6 bg-white/10 md:w-8 md:h-px mx-2 md:mx-0" />
+          <button
+            onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
+            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+          >
+            <MessageSquare size={20} className="md:w-6 md:h-6" />
+            {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
+          </button>
         </div>
         <div className="flex md:flex-col gap-4 items-center">
           <button className="w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5">
             <Share2 size={20} onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications(prev => [...prev, "Link copied!"]); setTimeout(() => setNotifications(prev => prev.slice(1)), 2000); }} />
           </button>
-          <img src={user.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-2xl border border-white/10" alt="me" referrerPolicy="no-referrer" />
+          <img src={user.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-2xl border border-white/10 cursor-pointer hover:scale-105 transition-transform" alt="me" referrerPolicy="no-referrer" onClick={() => setIsEditingProfile(true)} />
         </div>
       </div>
 
@@ -842,31 +879,58 @@ export default function App() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 10 }}
-                  className="absolute top-full left-0 right-0 mt-2 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50 max-h-[60vh] overflow-y-auto"
+                  className="fixed md:absolute top-16 md:top-full left-0 right-0 md:mt-2 bg-[#0a0a0a] border-b md:border border-white/10 md:rounded-2xl overflow-hidden shadow-2xl z-[100] h-[calc(100vh-64px)] md:h-auto md:max-h-[70vh] overflow-y-auto"
                 >
-                  <div className="p-2 flex justify-between items-center border-b border-white/5">
-                    <span className="text-xs text-gray-500 px-2">{isSearching ? "Searching..." : "Results"}</span>
-                    <button onClick={() => setSearchResults([])} className="p-1 hover:bg-white/5 rounded-lg"><X size={14} /></button>
+                  <div className="p-4 md:p-3 flex justify-between items-center border-b border-white/5 bg-[#0a0a0a] sticky top-0 z-10">
+                    <span className="text-sm md:text-xs text-gray-400 px-2 font-bold uppercase tracking-widest">{isSearching ? "Searching..." : "Search Results"}</span>
+                    <button onClick={() => setSearchResults([])} className="p-2 md:p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors">
+                      <X size={24} className="md:w-4 md:h-4" />
+                    </button>
                   </div>
                   {isSearching ? (
-                    <div className="p-8 text-center text-gray-500">
-                      <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-2" />
-                      <p className="text-xs">Finding the best matches...</p>
+                    <div className="p-16 md:p-12 text-center text-gray-500">
+                      <div className="w-10 h-10 md:w-8 md:h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-6 md:mb-4" />
+                      <p className="text-lg md:text-sm font-medium">Finding the best matches...</p>
                     </div>
                   ) : (
-                    searchResults.map((item: any) => (
-                      <div key={item.id} className="p-3 hover:bg-white/5 flex gap-3 md:gap-4 items-center group">
-                        <img src={item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/80x80.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined))} className="w-10 h-10 md:w-12 md:h-12 rounded-lg object-cover flex-shrink-0" alt="" referrerPolicy="no-referrer" />
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-sm leading-tight mb-0.5 line-clamp-1 md:line-clamp-none">{item.title || item.name}</h4>
-                          <p className="text-xs text-gray-500 truncate">{item.author?.name || item.artist?.name}</p>
+                    <div className="p-2 md:p-1 space-y-1">
+                      {searchResults.map((item: any) => (
+                        <div key={item.id} className="p-4 md:p-3 hover:bg-white/5 flex gap-5 md:gap-4 items-center group rounded-2xl md:rounded-xl transition-all active:scale-[0.98]">
+                          <div className="relative flex-shrink-0">
+                            <img 
+                              src={item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/160x160.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined))} 
+                              className="w-16 h-16 md:w-14 md:h-14 rounded-xl object-cover shadow-2xl border border-white/5" 
+                              alt="" 
+                              referrerPolicy="no-referrer" 
+                            />
+                            <div className="absolute inset-0 bg-black/20 rounded-xl" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-lg md:text-base leading-tight mb-1 line-clamp-2 md:line-clamp-1 text-white">{item.title || item.name}</h4>
+                            <p className="text-sm md:text-xs text-gray-400 truncate font-medium tracking-wide">
+                              {item.author?.name || item.artist?.name || item.artists?.[0]?.name || "Unknown Artist"}
+                              {item.duration ? ` • ${formatTime(item.duration)}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex gap-3 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
+                            <button 
+                              onClick={() => { playNow(item); setSearchResults([]); }} 
+                              className="p-4 md:p-3 bg-white text-black rounded-2xl md:rounded-xl hover:scale-110 active:scale-90 transition-transform shadow-xl"
+                              title="Play Now"
+                            >
+                              <Play size={20} className="md:w-4 md:h-4" fill="currentColor" />
+                            </button>
+                            <button 
+                              onClick={() => { addToQueue(item); setSearchResults([]); }} 
+                              className="p-4 md:p-3 bg-white/10 text-white rounded-2xl md:rounded-xl hover:bg-white/20 active:scale-90 transition-all border border-white/10"
+                              title="Add to Queue"
+                            >
+                              <Plus size={20} className="md:w-4 md:h-4" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-1 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                          <button onClick={() => playNow(item)} className="p-1.5 md:p-2 bg-white text-black rounded-lg"><Play size={12} className="md:w-3.5 md:h-3.5" fill="currentColor" /></button>
-                          <button onClick={() => addToQueue(item)} className="p-1.5 md:p-2 bg-white/10 rounded-lg"><Plus size={12} className="md:w-3.5 md:h-3.5" /></button>
-                        </div>
-                      </div>
-                    ))
+                      ))}
+                    </div>
                   )}
                 </motion.div>
               )}
@@ -891,28 +955,6 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <button 
-              className="md:hidden p-2 text-white hover:bg-white/10 rounded-lg transition-colors relative" 
-              onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
-            >
-              <MessageSquare size={20} />
-              {hasNewMessages && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-ping" />
-              )}
-              {hasNewMessages && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setTempName(user.name);
-                setTempAvatar(user.avatar);
-                setIsEditingProfile(true);
-              }}
-              className="md:hidden w-8 h-8 rounded-full overflow-hidden border border-white/20"
-            >
-              <img src={user.avatar} alt="me" referrerPolicy="no-referrer" />
-            </button>
           </div>
         </header>
 
@@ -1121,151 +1163,168 @@ export default function App() {
         </main>
       </div>
 
-      {/* Right Sidebar - Chat/Queue/Logs */}
-      <div className={cn(
-        "w-80 glass-dark flex flex-col z-50 absolute md:relative right-0 top-0 bottom-0 md:bottom-auto md:h-full transition-transform duration-300 shadow-2xl md:shadow-none pb-16 md:pb-0",
-        showMobileSidebar ? "translate-x-0" : "translate-x-full md:translate-x-0"
-      )}>
-        <div className="flex border-b border-white/5 relative items-center">
-          <button
-            onClick={() => setShowMobileSidebar(false)}
-            className="md:hidden p-4 text-gray-500 hover:text-white transition-colors"
-          >
-            <X size={20} />
-          </button>
-          <div className="flex-1 flex">
-            <button
-              onClick={() => setSidebarTab("chat")}
-              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "chat" ? "text-white border-b-2 border-white" : "text-gray-500")}
+      {/* Right Sidebar - Chat/Queue/Logs (Now a toggleable overlay on all screens) */}
+      <AnimatePresence>
+        {showMobileSidebar && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMobileSidebar(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]"
+            />
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="fixed right-0 top-0 bottom-0 w-full sm:w-96 glass-dark flex flex-col z-[70] shadow-2xl border-l border-white/5"
             >
-              Chat
-            </button>
-            <button
-              onClick={() => setSidebarTab("queue")}
-              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "queue" ? "text-white border-b-2 border-white" : "text-gray-500")}
-            >
-              Queue
-            </button>
-            <button
-              onClick={() => setSidebarTab("logs")}
-              className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "logs" ? "text-white border-b-2 border-white" : "text-gray-500")}
-            >
-              Logs
-            </button>
-          </div>
-          <div className="relative px-4" ref={qualityMenuRef}>
-            <button 
-              onClick={() => setShowQualityMenu(!showQualityMenu)}
-              className={cn("transition-colors", showQualityMenu ? "text-white" : "text-gray-500 hover:text-white")}
-            >
-              <Volume2 size={18} />
-            </button>
-            <AnimatePresence>
-              {showQualityMenu && (
-                <motion.div 
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute top-full right-0 mt-2 glass p-2 rounded-xl min-w-[140px] z-[60]"
+              <div className="flex border-b border-white/5 relative items-center">
+                <button
+                  onClick={() => setShowMobileSidebar(false)}
+                  className="p-4 text-gray-500 hover:text-white transition-colors"
                 >
-                  <p className="text-[10px] text-gray-500 px-2 mb-1 uppercase font-bold">Audio Quality</p>
-                  {(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const).map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => { setAudioQuality(q); setShowQualityMenu(false); }}
-                      className={cn("w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all", audioQuality === q ? "bg-white text-black" : "hover:bg-white/5")}
-                    >
-                      {q.replace(/_/g, ' ')}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-          {sidebarTab === "chat" && (
-            <div className="flex flex-col h-full">
-              <div className="flex-1 space-y-4">
-                {room.messages.map((msg, i) => (
-                  <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
-                    <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
-                    <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
-                      <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
-                      <p>{msg.text}</p>
-                    </div>
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-              <div className="mt-4 space-y-4">
-                <div className="flex gap-2 justify-center">
-                  {["🔥", "❤️", "😂", "😮", "👏", "🎉", "✨"].map((e) => (
-                    <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
-                  ))}
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Type a message..."
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        sendMessage((e.target as HTMLInputElement).value);
-                        (e.target as HTMLInputElement).value = "";
-                      }
-                    }}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
-                  />
-                  <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
-                    <Send size={18} />
+                  <X size={20} />
+                </button>
+                <div className="flex-1 flex">
+                  <button
+                    onClick={() => setSidebarTab("chat")}
+                    className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "chat" ? "text-white border-b-2 border-white" : "text-gray-500")}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    onClick={() => setSidebarTab("queue")}
+                    className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "queue" ? "text-white border-b-2 border-white" : "text-gray-500")}
+                  >
+                    Queue
+                  </button>
+                  <button
+                    onClick={() => setSidebarTab("logs")}
+                    className={cn("flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all", sidebarTab === "logs" ? "text-white border-b-2 border-white" : "text-gray-500")}
+                  >
+                    Logs
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {sidebarTab === "queue" && (
-            <div className="space-y-4">
-              {room.queue.length === 0 ? (
-                <div className="text-center py-12 text-gray-500 space-y-2">
-                  <ListMusic size={48} className="mx-auto opacity-20" />
-                  <p>Queue is empty</p>
+                <div className="relative px-4" ref={qualityMenuRef}>
+                  <button 
+                    onClick={() => setShowQualityMenu(!showQualityMenu)}
+                    className={cn("transition-colors", showQualityMenu ? "text-white" : "text-gray-500 hover:text-white")}
+                  >
+                    <Volume2 size={18} />
+                  </button>
+                  <AnimatePresence>
+                    {showQualityMenu && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute top-full right-0 mt-2 glass p-2 rounded-xl min-w-[140px] z-[80]"
+                      >
+                        <p className="text-[10px] text-gray-500 px-2 mb-1 uppercase font-bold">Audio Quality</p>
+                        {(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const).map((q) => (
+                          <button
+                            key={q}
+                            onClick={() => { setAudioQuality(q); setShowQualityMenu(false); }}
+                            className={cn("w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all", audioQuality === q ? "bg-white text-black" : "hover:bg-white/5")}
+                          >
+                            {q.replace(/_/g, ' ')}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-              ) : (
-                room.queue.map((item, i) => (
-                  <div key={i} className="flex gap-3 items-center group">
-                    <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-bold truncate">{item.title}</h4>
-                      <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                {sidebarTab === "chat" && (
+                  <div className="flex flex-col h-full">
+                    <div className="flex-1 space-y-4">
+                      {room.messages.map((msg, i) => (
+                        <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
+                          <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                          <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
+                            <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
+                            <p>{msg.text}</p>
+                          </div>
+                        </div>
+                      ))}
+                      <div ref={chatEndRef} />
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                      <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
-                        <Play size={14} fill="currentColor" />
-                      </button>
-                      <button onClick={() => removeFromQueue(item.id)} className="p-2 hover:bg-red-500/20 text-red-500 rounded-lg">
-                        <X size={14} />
-                      </button>
+                    <div className="mt-4 space-y-4">
+                      <div className="flex gap-2 justify-center">
+                        {["🔥", "❤️", "😂", "😮", "👏", "🎉", "✨"].map((e) => (
+                          <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
+                        ))}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Type a message..."
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              sendMessage((e.target as HTMLInputElement).value);
+                              (e.target as HTMLInputElement).value = "";
+                            }
+                          }}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
+                        />
+                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                          <Send size={18} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
-          )}
+                )}
 
-          {sidebarTab === "logs" && (
-            <div className="space-y-3">
-              {room.logs.map((log, i) => (
-                <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
-                  <History size={12} className="mt-0.5 shrink-0" />
-                  <p>{log}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+                {sidebarTab === "queue" && (
+                  <div className="space-y-4">
+                    {room.queue.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500 space-y-2">
+                        <ListMusic size={48} className="mx-auto opacity-20" />
+                        <p>Queue is empty</p>
+                      </div>
+                    ) : (
+                      room.queue.map((item, i) => (
+                        <div key={i} className="flex gap-3 items-center group">
+                          <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-bold truncate">{item.title}</h4>
+                            <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
+                              <Play size={14} fill="currentColor" />
+                            </button>
+                            <button onClick={() => removeFromQueue(item.id)} className="p-2 hover:bg-red-500/20 text-red-500 rounded-lg">
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {sidebarTab === "logs" && (
+                  <div className="space-y-3">
+                    {room.logs.map((log, i) => (
+                      <div key={i} className="flex gap-3 text-[11px] text-gray-400 bg-white/5 p-2 rounded-lg">
+                        <History size={12} className="mt-0.5 shrink-0" />
+                        <p>{log}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Notifications */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
