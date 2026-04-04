@@ -3,8 +3,13 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import axios from "axios";
+import cors from "cors";
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
@@ -284,6 +289,43 @@ io.on("connection", (socket) => {
       }
     }
   });
+});
+
+// API Proxy Routes
+app.get("/api/search/youtube", async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.status(400).json({ error: "Query required" });
+  try {
+    const response = await axios.get(`https://yt-search-nine.vercel.app/search?q=${encodeURIComponent(q as string)}`);
+    res.json(response.data);
+  } catch (error: any) {
+    console.error("YouTube Proxy Error:", error.message);
+    res.status(500).json({ error: "YouTube search failed" });
+  }
+});
+
+app.get("/api/search/tidal", async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.status(400).json({ error: "Query required" });
+  
+  const encodedQuery = encodeURIComponent(q as string);
+  const endpoints = [
+    `https://hifi-api-production.up.railway.app/search/?s=${encodedQuery}`,
+    `https://tidal-api-sigma.vercel.app/search?q=${encodedQuery}`
+  ];
+  
+  for (const endpoint of endpoints) {
+    try {
+      console.log("Proxying Tidal search to:", endpoint);
+      const response = await axios.get(endpoint, { timeout: 5000 });
+      if (response.data) {
+        return res.json(response.data);
+      }
+    } catch (e: any) {
+      console.warn(`Proxy search failed for ${endpoint}:`, e.message);
+    }
+  }
+  res.status(500).json({ error: "Tidal search failed on all endpoints" });
 });
 
 async function startServer() {

@@ -683,50 +683,29 @@ export default function App() {
     setIsSearching(true);
     setSearchResults([]);
     try {
+      const endpoint = activeTab === "youtube" ? "/api/search/youtube" : "/api/search/tidal";
+      console.log(`Searching ${activeTab} via proxy:`, endpoint);
+      const res = await axios.get(`${endpoint}?q=${encodeURIComponent(searchQuery)}`);
+      const data = res.data;
+      
+      let results = [];
       if (activeTab === "youtube") {
-        const res = await axios.get(`https://yt-search-nine.vercel.app/search?q=${searchQuery}`);
-        const results = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
-        setSearchResults(results);
-      } else if (activeTab === "tidal") {
-        const encodedQuery = encodeURIComponent(searchQuery);
-        // Try multiple potential API shapes/endpoints if one fails
-        const endpoints = [
-          `https://hifi-api-production.up.railway.app/search/?s=${encodedQuery}`,
-          `https://tidal-api-sigma.vercel.app/search?q=${encodedQuery}` // Potential fallback
-        ];
-        
-        let results = [];
-        let success = false;
-        
-        for (const endpoint of endpoints) {
-          try {
-            console.log("Searching Tidal with URL:", endpoint);
-            const res = await axios.get(endpoint, { timeout: 5000 });
-            const data = res.data;
-            
-            if (data?.data?.items) results = data.data.items;
-            else if (data?.items) results = data.items;
-            else if (Array.isArray(data?.data)) results = data.data;
-            else if (Array.isArray(data)) results = data;
-            
-            if (results.length > 0) {
-              success = true;
-              break;
-            }
-          } catch (e) {
-            console.warn(`Search failed for ${endpoint}:`, e);
-          }
-        }
-        
-        setSearchResults(Array.isArray(results) ? results : []);
-        if (!success) {
-          setNotifications((prev) => [...prev, "Tidal search returned no results."]);
-          setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
-        }
+        results = Array.isArray(data) ? data : (data.results || data.items || []);
+      } else {
+        if (data?.data?.items) results = data.data.items;
+        else if (data?.items) results = data.items;
+        else if (Array.isArray(data?.data)) results = data.data;
+        else if (Array.isArray(data)) results = data;
+      }
+      
+      setSearchResults(Array.isArray(results) ? results : []);
+      if (results.length === 0) {
+        setNotifications((prev) => [...prev, `${activeTab === "youtube" ? "YouTube" : "Tidal"} search returned no results.`]);
+        setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
       }
     } catch (err: any) {
       console.error("Search error:", err);
-      const errorMessage = err.response?.data?.message || err.message || "Unknown error";
+      const errorMessage = err.response?.data?.error || err.message || "Unknown error";
       setNotifications((prev) => [...prev, `Search failed: ${errorMessage}`]);
       setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
     } finally {
@@ -866,11 +845,23 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && searchMedia()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    searchMedia();
+                  }
+                }}
                 onFocus={() => { if (searchResults.length > 0) setIsSearching(false); }}
                 placeholder={`Search ${activeTab === "youtube" ? "YouTube" : "TIDAL"}...`}
-                className="w-full bg-[#1a1a1a] border border-white/10 rounded-full py-2 pl-10 pr-4 md:py-2.5 md:pl-12 focus:outline-none focus:border-white/20 transition-all text-white text-sm md:text-base"
+                className="w-full bg-[#1a1a1a] border border-white/10 rounded-full py-2 pl-10 pr-12 md:py-2.5 md:pl-12 focus:outline-none focus:border-white/20 transition-all text-white text-sm md:text-base"
               />
+              <button 
+                onClick={searchMedia}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors"
+                title="Search"
+              >
+                <Search size={20} />
+              </button>
             </div>
             {/* Search Results Dropdown */}
             <AnimatePresence>
