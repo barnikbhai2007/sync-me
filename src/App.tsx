@@ -161,6 +161,7 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
       >
         <h1 className="text-4xl md:text-6xl font-black tracking-tighter">sync-me</h1>
         <p className="text-gray-400 text-base md:text-lg">Watch, Jam, and Play together in real-time.</p>
+        <p className="text-gray-500 text-xs mt-4">made by brokenaqua (barnik)</p>
       </motion.div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full max-w-4xl">
@@ -232,6 +233,7 @@ export default function App() {
   const [localTime, setLocalTime] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"HI_RES_LOSSLESS" | "LOSSLESS" | "HIGH" | "LOW">("HIGH");
   const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [isJoiningRoom, setIsJoiningRoom] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const savedUser = localStorage.getItem("sync-me-user");
@@ -320,9 +322,14 @@ export default function App() {
   };
 
   const skipNext = () => {
-    if (room) {
-      const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
-      const nextItem = room.queue[currentIndex + 1] || room.queue[0];
+    if (room && room.queue.length > 0) {
+      let nextItem;
+      if (room.shuffle) {
+        nextItem = room.queue[Math.floor(Math.random() * room.queue.length)];
+      } else {
+        const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
+        nextItem = room.queue[currentIndex + 1] || room.queue[0];
+      }
       if (nextItem) {
         syncMedia(room.code, { item: nextItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: nextItem.type });
       }
@@ -330,9 +337,14 @@ export default function App() {
   };
 
   const skipPrevious = () => {
-    if (room) {
-      const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
-      const prevItem = room.queue[currentIndex - 1] || room.queue[room.queue.length - 1];
+    if (room && room.queue.length > 0) {
+      let prevItem;
+      if (room.shuffle) {
+        prevItem = room.queue[Math.floor(Math.random() * room.queue.length)];
+      } else {
+        const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
+        prevItem = room.queue[currentIndex - 1] || room.queue[room.queue.length - 1];
+      }
       if (prevItem) {
         syncMedia(room.code, { item: prevItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: prevItem.type });
       }
@@ -652,9 +664,24 @@ export default function App() {
 
   useEffect(() => {
     if (room?.currentMedia.item?.type === "tidal" && room.currentMedia.item.trackId) {
-      fetchTidalManifest(room.currentMedia.item.trackId);
+      // Immediate cleanup to stop previous song
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+        audioRef.current.load();
+      }
+      if (shakaPlayerRef.current) {
+        shakaPlayerRef.current.unload().catch(console.error);
+      }
+
+      setIsLoadingManifest(true);
+      setAudioUrl(null); // Clear previous URL immediately to prevent stale playback
+      fetchTidalManifest(room.currentMedia.item.trackId).finally(() => {
+        setIsLoadingManifest(false);
+      });
       fetchRecommendations(room.currentMedia.item.trackId);
     } else {
+      setIsLoadingManifest(false);
       setAudioUrl(null);
       setRecommendations([]);
     }
@@ -662,16 +689,21 @@ export default function App() {
 
   useEffect(() => {
     if (audioRef.current) {
-      if (room?.currentMedia.playing) {
-        audioRef.current.play().catch(console.error);
+      if (room?.currentMedia.playing && !isLoadingManifest) {
+        // Only attempt to play if we have a source or if it's DASH (Shaka)
+        if (audioUrl || (room.currentMedia.item?.type === "tidal" && shakaPlayerRef.current)) {
+          audioRef.current.play().catch((err) => {
+            console.warn("Playback failed:", err);
+          });
+        }
       } else {
         audioRef.current.pause();
       }
     }
-  }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.currentTime]);
+  }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.item?.id, isLoadingManifest]);
 
   useEffect(() => {
-    if (audioRef.current && room?.currentMedia.currentTime !== undefined) {
+    if (audioRef.current && room?.currentMedia.currentTime !== undefined && !isLoadingManifest) {
       const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
       const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
       
@@ -679,7 +711,7 @@ export default function App() {
         audioRef.current.currentTime = targetTime;
       }
     }
-  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl, room?.currentMedia.playing]);
+  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl, room?.currentMedia.playing, isLoadingManifest]);
 
   const searchMedia = async () => {
     if (!searchQuery) return;
@@ -730,6 +762,8 @@ export default function App() {
     };
     if (room) {
       addToQueueService(room.code, queueItem);
+      setNotifications((prev) => [...prev, "Added to queue"]);
+      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
     }
   };
 
@@ -747,6 +781,8 @@ export default function App() {
     };
     if (room) {
       playNowService(room.code, queueItem);
+      setNotifications((prev) => [...prev, "Playing now"]);
+      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
     }
   };
 
@@ -798,6 +834,14 @@ export default function App() {
         <div className="hidden md:flex w-12 h-12 bg-white text-black rounded-2xl items-center justify-center font-black text-xl">S</div>
         <div className="flex md:flex-col gap-4 flex-1 items-center justify-center md:justify-start w-full md:w-auto">
           <button
+            onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
+            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+          >
+            <MessageSquare size={20} className="md:w-6 md:h-6" />
+            {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
+          </button>
+          <div className="hidden md:block w-px h-6 bg-white/10 md:w-8 md:h-px mx-2 md:mx-0" />
+          <button
             onClick={() => switchTab("youtube")}
             className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "youtube" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
           >
@@ -814,14 +858,6 @@ export default function App() {
             className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "play" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
           >
             <Gamepad2 size={20} className="md:w-6 md:h-6" />
-          </button>
-          <div className="w-px h-6 bg-white/10 md:w-8 md:h-px mx-2 md:mx-0" />
-          <button
-            onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
-            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
-          >
-            <MessageSquare size={20} className="md:w-6 md:h-6" />
-            {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
           </button>
         </div>
         <div className="flex md:flex-col gap-4 items-center">
