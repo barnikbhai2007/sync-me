@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import socket from "./lib/socket";
+import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService } from "./lib/firebaseService";
 import { User, RoomState, QueueItem, Message } from "./types";
 import { cn, formatTime, generateRoomCode } from "./lib/utils";
 import axios from "axios";
@@ -214,7 +214,11 @@ export default function App() {
   };
 
   const cycleRepeatMode = () => {
-    socket.emit("toggle-repeat", { code: room?.code });
+    if (room) {
+      const modes: ("none" | "one" | "all")[] = ["none", "one", "all"];
+      const nextMode = modes[(modes.indexOf(room.repeatMode) + 1) % 3];
+      updateRoomState(room.code, { repeatMode: nextMode });
+    }
   };
 
   const parseSubtitles = (subtitles: string) => {
@@ -236,23 +240,41 @@ export default function App() {
   });
 
   const togglePlay = () => {
-    socket.emit("sync-media", { code: room?.code, playing: !room?.currentMedia.playing, currentTime, type: activeTab, user });
+    if (room) {
+      syncMedia(room.code, { ...room.currentMedia, playing: !room.currentMedia.playing });
+    }
   };
 
   const skipNext = () => {
-    socket.emit("skip-next", { code: room?.code, user });
+    if (room) {
+      const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
+      const nextItem = room.queue[currentIndex + 1] || room.queue[0];
+      if (nextItem) {
+        syncMedia(room.code, { item: nextItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: nextItem.type });
+      }
+    }
   };
 
   const skipPrevious = () => {
-    socket.emit("skip-previous", { code: room?.code, user });
+    if (room) {
+      const currentIndex = room.queue.findIndex(item => item.id === room.currentMedia.item?.id);
+      const prevItem = room.queue[currentIndex - 1] || room.queue[room.queue.length - 1];
+      if (prevItem) {
+        syncMedia(room.code, { item: prevItem, playing: true, currentTime: 0, lastUpdated: Date.now(), type: prevItem.type });
+      }
+    }
   };
 
   const toggleShuffle = () => {
-    socket.emit("toggle-shuffle", { code: room?.code });
+    if (room) {
+      updateRoomState(room.code, { shuffle: !room.shuffle });
+    }
   };
 
   const removeFromQueue = (itemId: string) => {
-    socket.emit("remove-from-queue", { code: room?.code, itemId, user });
+    if (room) {
+      removeFromQueueService(room.code, itemId);
+    }
   };
 
   useEffect(() => {
@@ -309,7 +331,9 @@ export default function App() {
     if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
       audioRef.current.currentTime = localTime;
     }
-    socket.emit("sync-media", { code: room?.code, playing: room?.currentMedia.playing, currentTime: localTime, type: activeTab, user });
+    if (room) {
+      syncMedia(room.code, { ...room.currentMedia, currentTime: localTime });
+    }
   };
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -340,58 +364,32 @@ export default function App() {
     const updatedUser = { ...user!, name: tempName, avatar: tempAvatar };
     setUser(updatedUser);
     localStorage.setItem("sync-me-user", JSON.stringify(updatedUser));
-    socket.emit("update-user", { code: room?.code, user: updatedUser });
+    if (room) {
+      const updatedUsers = room.users.map(u => u.id === user?.id ? updatedUser : u);
+      updateRoomState(room.code, { users: updatedUsers });
+    }
     setIsEditingProfile(false);
   };
 
   useEffect(() => {
-    socket.on("init-state", (state: RoomState) => {
-      setRoom(state);
-      setIsJoiningRoom(false);
-      setActiveTab(state.currentMedia.type);
-      // Update URL without refreshing
-      const url = new URL(window.location.href);
-      url.searchParams.set("room", state.code);
-      window.history.replaceState({}, "", url.toString());
-    });
-
-    socket.on("room-update", (state: RoomState) => {
-      setRoom(state);
-      if (state.currentMedia.item?.type === "tidal" && state.currentMedia.item.trackId) {
-        fetchLyrics(state.currentMedia.item.trackId);
-      }
-    });
-
-    socket.on("media-update", (update) => {
-      setRoom((prev) => prev ? { ...prev, currentMedia: { ...prev.currentMedia, ...update } } : null);
-    });
-
-    socket.on("new-message", (msg: Message) => {
-      setRoom((prev) => prev ? { ...prev, messages: [...prev.messages, msg] } : null);
-      if (!showMobileSidebar) {
-        setHasNewMessages(true);
-      }
-      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    });
-
-    socket.on("new-emoji", (emoji: string) => {
-      spawnEmoji(emoji);
-    });
-
-    socket.on("notification", ({ message }) => {
-      setNotifications((prev) => [...prev, message]);
-      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
-    });
-
-    return () => {
-      socket.off("init-state");
-      socket.off("room-update");
-      socket.off("media-update");
-      socket.off("new-message");
-      socket.off("new-emoji");
-      socket.off("notification");
-    };
-  }, []);
+    if (room?.code) {
+      const unsubscribe = subscribeToRoom(room.code, (state) => {
+        setRoom(state);
+        setIsJoiningRoom(false);
+        setActiveTab(state.currentMedia.type);
+        
+        if (state.currentMedia.item?.type === "tidal" && state.currentMedia.item.trackId) {
+          fetchLyrics(state.currentMedia.item.trackId);
+        }
+        
+        // Update URL without refreshing
+        const url = new URL(window.location.href);
+        url.searchParams.set("room", state.code);
+        window.history.replaceState({}, "", url.toString());
+      });
+      return () => unsubscribe();
+    }
+  }, [room?.code]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -399,28 +397,29 @@ export default function App() {
 
     if (roomCode && user && !room) {
       setIsJoiningRoom(true);
-      socket.connect();
-      socket.emit("join-room", { code: roomCode, name: user.name, avatar: user.avatar });
+      joinRoomService(roomCode, user);
     }
   }, [user]); // Run when user is available or changes
 
   const switchTab = (tab: "youtube" | "tidal" | "play") => {
-    // Logic: YouTube -> Music/Play: Pause video
-    if (activeTab === "youtube" && (tab === "tidal" || tab === "play")) {
-      if (room?.currentMedia.playing) {
-        socket.emit("sync-media", { code: room?.code, playing: false, currentTime, type: activeTab, user });
+    if (room) {
+      // Logic: YouTube -> Music/Play: Pause video
+      if (activeTab === "youtube" && (tab === "tidal" || tab === "play")) {
+        if (room.currentMedia.playing) {
+          syncMedia(room.code, { ...room.currentMedia, playing: false });
+        }
       }
-    }
-    // Logic: TIDAL -> YouTube: Pause music
-    if (activeTab === "tidal" && tab === "youtube") {
-      if (room?.currentMedia.playing) {
-        socket.emit("sync-media", { code: room?.code, playing: false, currentTime, type: activeTab, user });
+      // Logic: TIDAL -> YouTube: Pause music
+      if (activeTab === "tidal" && tab === "youtube") {
+        if (room.currentMedia.playing) {
+          syncMedia(room.code, { ...room.currentMedia, playing: false });
+        }
       }
-    }
-    // Logic: TIDAL -> Play: Keep playing music (no action needed)
+      // Logic: TIDAL -> Play: Keep playing music (no action needed)
 
-    setActiveTab(tab);
-    socket.emit("switch-tab", { code: room?.code, type: tab });
+      setActiveTab(tab);
+      updateRoomState(room.code, { currentMedia: { ...room.currentMedia, type: tab } });
+    }
   };
 
   const handleUserSetup = (u: User) => {
@@ -428,18 +427,20 @@ export default function App() {
     localStorage.setItem("sync-me-user", JSON.stringify(u));
   };
 
-  const createRoom = () => {
+  const createRoom = async () => {
     const code = generateRoomCode();
-    socket.connect();
-    socket.emit("join-room", { code, name: user?.name, avatar: user?.avatar });
+    if (user) {
+      await joinRoomService(code, user);
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("room", code);
     window.history.replaceState({}, "", url.toString());
   };
 
-  const joinRoom = (code: string) => {
-    socket.connect();
-    socket.emit("join-room", { code, name: user?.name, avatar: user?.avatar });
+  const joinRoom = async (code: string) => {
+    if (user) {
+      await joinRoomService(code, user);
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("room", code);
     window.history.replaceState({}, "", url.toString());
@@ -603,7 +604,9 @@ export default function App() {
       videoId: item.id || item.videoId,
       trackId: item.id || item.trackId,
     };
-    socket.emit("add-to-queue", { code: room?.code, item: queueItem });
+    if (room) {
+      addToQueueService(room.code, queueItem);
+    }
   };
 
   const playNow = (item: any) => {
@@ -618,16 +621,20 @@ export default function App() {
       videoId: item.id || item.videoId,
       trackId: item.id || item.trackId,
     };
-    socket.emit("play-now", { code: room?.code, item: queueItem });
+    if (room) {
+      playNowService(room.code, queueItem);
+    }
   };
 
   const sendMessage = (text: string) => {
-    if (!text.trim()) return;
-    socket.emit("send-message", { code: room?.code, text, user });
+    if (!text.trim() || !room || !user) return;
+    sendMessageService(room.code, { user, text, timestamp: Date.now() });
   };
 
   const sendEmoji = (emoji: string) => {
-    socket.emit("send-emoji", { code: room?.code, emoji });
+    if (room) {
+      sendEmojiService(room.code, emoji);
+    }
   };
 
   const fetchLyrics = async (id: string) => {
@@ -758,16 +765,16 @@ export default function App() {
                 <button
                   key={u.id}
                   onClick={() => {
-                    if (u.id === socket.id) {
+                    if (u.id === user?.id) {
                       setTempName(u.name);
                       setTempAvatar(u.avatar);
                       setIsEditingProfile(true);
                     }
                   }}
-                  className={cn("relative transition-transform hover:scale-110 z-10", u.id === socket.id ? "cursor-pointer" : "cursor-default")}
+                  className={cn("relative transition-transform hover:scale-110 z-10", u.id === user?.id ? "cursor-pointer" : "cursor-default")}
                 >
-                  <img src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.id === socket.id ? "Edit Profile" : u.name} alt={u.name} referrerPolicy="no-referrer" />
-                  {u.id === socket.id && <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-[#050505] rounded-full" />}
+                  <img src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.id === user?.id ? "Edit Profile" : u.name} alt={u.name} referrerPolicy="no-referrer" />
+                  {u.id === user?.id && <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-[#050505] rounded-full" />}
                 </button>
               ))}
             </div>
@@ -1069,9 +1076,9 @@ export default function App() {
             <div className="flex flex-col h-full">
               <div className="flex-1 space-y-4">
                 {room.messages.map((msg, i) => (
-                  <div key={i} className={cn("flex gap-3", msg.user.id === socket.id ? "flex-row-reverse" : "")}>
+                  <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
                     <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
-                    <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === socket.id ? "bg-white text-black" : "bg-white/5")}>
+                    <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
                       <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
                       <p>{msg.text}</p>
                     </div>
