@@ -19,24 +19,41 @@ const MoodBackground = ({ mood, thumbnail }: { mood: string; thumbnail?: string 
 
   return (
     <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505]">
-      {/* Dynamic Thumbnail Background */}
+      {/* Dynamic Thumbnail Background - Multiple Layers for Depth */}
       <AnimatePresence mode="wait">
         {thumbnail && (
-          <motion.div
-            key={thumbnail}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.4 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 2 }}
-            className="absolute inset-0 z-0"
-          >
-            <img 
-              src={thumbnail} 
-              className="w-full h-full object-cover blur-[100px] scale-150" 
-              alt="" 
-              referrerPolicy="no-referrer"
-            />
-          </motion.div>
+          <>
+            <motion.div
+              key={`${thumbnail}-bg-1`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.3 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 2 }}
+              className="absolute inset-0 z-0"
+            >
+              <img 
+                src={thumbnail} 
+                className="w-full h-full object-cover blur-[80px] scale-125" 
+                alt="" 
+                referrerPolicy="no-referrer"
+              />
+            </motion.div>
+            <motion.div
+              key={`${thumbnail}-bg-2`}
+              initial={{ opacity: 0, scale: 1.5 }}
+              animate={{ opacity: 0.2, scale: 1.8 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 3 }}
+              className="absolute inset-0 z-0"
+            >
+              <img 
+                src={thumbnail} 
+                className="w-full h-full object-cover blur-[120px] rotate-12" 
+                alt="" 
+                referrerPolicy="no-referrer"
+              />
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
@@ -45,21 +62,21 @@ const MoodBackground = ({ mood, thumbnail }: { mood: string; thumbnail?: string 
         {selectedColors.map((color: string, i: number) => (
           <motion.div
             key={`${mood}-${i}`}
-            className="absolute rounded-full mix-blend-screen filter blur-[120px] opacity-40"
+            className="absolute rounded-full mix-blend-screen filter blur-[120px] opacity-30"
             style={{
               backgroundColor: color,
-              width: "60vw",
-              height: "60vw",
-              top: i === 0 ? "-20%" : i === 1 ? "30%" : "50%",
-              left: i === 0 ? "-20%" : i === 1 ? "50%" : "0%",
+              width: "70vw",
+              height: "70vw",
+              top: i === 0 ? "-30%" : i === 1 ? "40%" : "60%",
+              left: i === 0 ? "-30%" : i === 1 ? "60%" : "10%",
             }}
             animate={{
-              x: [0, 150, -100, 0],
-              y: [0, -150, 100, 0],
-              scale: [1, 1.3, 0.7, 1],
+              x: [0, 200, -150, 0],
+              y: [0, -200, 150, 0],
+              scale: [1, 1.4, 0.6, 1],
             }}
             transition={{
-              duration: 20 + i * 8,
+              duration: 25 + i * 10,
               repeat: Infinity,
               repeatType: "reverse",
               ease: "easeInOut",
@@ -69,7 +86,7 @@ const MoodBackground = ({ mood, thumbnail }: { mood: string; thumbnail?: string 
       </div>
       
       {/* Dark Overlay to ensure text readability */}
-      <div className="absolute inset-0 bg-black/40 z-20" />
+      <div className="absolute inset-0 bg-black/50 z-20" />
     </div>
   );
 };
@@ -287,6 +304,7 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
 // --- Main App ---
 
 export default function App() {
+  const [linkInput, setLinkInput] = useState("");
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem("sync-me-user");
     return saved ? JSON.parse(saved) : null;
@@ -403,20 +421,26 @@ export default function App() {
     let newQueue = [...room.queue];
     let newHistory = [...room.history];
 
+    // 1. If Repeat One is on, just loop the current song
     if (room.repeatMode === "one" && room.currentMedia.item) {
-      nextItem = { ...room.currentMedia.item };
-    } else if (newQueue.length > 0) {
+      nextItem = { ...room.currentMedia.item, id: Math.random().toString(36).substring(7) };
+    } 
+    // 2. If there are items in the queue, play the next one
+    else if (newQueue.length > 0) {
+      if (room.currentMedia.item) {
+        newHistory.push(room.currentMedia.item);
+      }
       nextItem = room.shuffle 
         ? newQueue.splice(Math.floor(Math.random() * newQueue.length), 1)[0]
         : newQueue.shift()!;
-    } else if (room.repeatMode === "all" && (newHistory.length > 0 || room.currentMedia.item)) {
+    } 
+    // 3. If the queue is empty but Repeat All is on, restart the queue from history
+    else if (room.repeatMode === "all") {
       const allItems = [...newHistory];
       if (room.currentMedia.item) allItems.push(room.currentMedia.item);
       
-      if (allItems.length === 1) {
-        nextItem = { ...allItems[0] };
-      } else {
-        newQueue = allItems;
+      if (allItems.length > 0) {
+        newQueue = [...allItems];
         newHistory = [];
         nextItem = room.shuffle 
           ? newQueue.splice(Math.floor(Math.random() * newQueue.length), 1)[0]
@@ -425,12 +449,6 @@ export default function App() {
     }
 
     if (nextItem) {
-      if (room.currentMedia.item && room.repeatMode !== "one" && room.repeatMode !== "all") {
-        newHistory.push(room.currentMedia.item);
-      } else if (room.currentMedia.item && room.repeatMode === "all" && newQueue.length > 0) {
-        newHistory.push(room.currentMedia.item);
-      }
-      
       updateRoomState(room.code, {
         queue: newQueue,
         history: newHistory,
@@ -964,20 +982,19 @@ export default function App() {
   };
 
   const addToQueue = (item: any) => {
+    if (!room) return;
     const queueItem: QueueItem = {
       id: Math.random().toString(36).substring(7),
-      type: activeTab as "youtube" | "tidal",
+      type: item.type || (activeTab === "play" ? (item.trackId ? "tidal" : "youtube") : activeTab),
       title: item.title || item.name,
-      artist: item.artist?.name || item.author?.name || item.publisher || "Unknown",
+      artist: item.artist?.name || item.author?.name || item.publisher || item.artist || "Unknown",
       thumbnail: item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/640x640.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined)),
       duration: item.duration || 0,
       addedBy: user?.name || "Guest",
       videoId: item.id || item.videoId,
       trackId: item.id || item.trackId,
     };
-    if (room) {
-      addToQueueService(room.code, queueItem);
-    }
+    addToQueueService(room.code, queueItem);
   };
 
   const handleToggleFavorite = async (item: QueueItem) => {
@@ -1024,9 +1041,9 @@ export default function App() {
   const playNow = (item: any) => {
     const queueItem: QueueItem = {
       id: Math.random().toString(36).substring(7),
-      type: activeTab as "youtube" | "tidal",
+      type: item.type || (activeTab === "play" ? (item.trackId ? "tidal" : "youtube") : activeTab),
       title: item.title || item.name,
-      artist: item.artist?.name || item.author?.name || item.publisher || "Unknown",
+      artist: item.artist?.name || item.author?.name || item.publisher || item.artist || "Unknown",
       thumbnail: item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/640x640.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined)),
       duration: item.duration || 0,
       addedBy: user?.name || "Guest",
@@ -1035,6 +1052,60 @@ export default function App() {
     };
     if (room) {
       playNowService(room.code, queueItem, user?.name);
+    }
+  };
+
+  const handleAddLink = async () => {
+    if (!linkInput.trim()) return;
+    
+    try {
+      // Basic URL parsing
+      if (linkInput.includes("youtube.com") || linkInput.includes("youtu.be")) {
+        const videoId = linkInput.includes("v=") 
+          ? linkInput.split("v=")[1].split("&")[0] 
+          : linkInput.split("/").pop();
+        
+        if (videoId) {
+          const res = await axios.get(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+          const item = {
+            id: videoId,
+            type: "youtube",
+            title: res.data.title,
+            thumbnail: res.data.thumbnail_url,
+            duration: 0,
+            addedBy: user?.name || "Guest",
+            videoId: videoId
+          };
+          addToQueue(item as any);
+          setLinkInput("");
+          setNotifications(prev => [...prev, "YouTube link added!"]);
+        }
+      } else if (linkInput.includes("tidal.com")) {
+        const trackId = linkInput.split("/").pop();
+        if (trackId) {
+          const res = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${trackId}`);
+          if (res.data) {
+            const item = {
+              id: trackId,
+              type: "tidal",
+              title: res.data.title,
+              artist: res.data.artist.name,
+              thumbnail: `https://resources.tidal.com/images/${res.data.album.cover.replace(/-/g, '/')}/640x640.jpg`,
+              duration: res.data.duration,
+              addedBy: user?.name || "Guest",
+              trackId: trackId
+            };
+            addToQueue(item as any);
+            setLinkInput("");
+            setNotifications(prev => [...prev, "TIDAL link added!"]);
+          }
+        }
+      } else {
+        setNotifications(prev => [...prev, "Invalid YouTube or TIDAL link."]);
+      }
+    } catch (err) {
+      console.error(err);
+      setNotifications(prev => [...prev, "Failed to add link. Please check the URL."]);
     }
   };
 
@@ -1360,11 +1431,15 @@ export default function App() {
             <div className="relative flex-1">
               <input
                 type="text"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddLink()}
                 placeholder="Paste YouTube or TIDAL link here..."
                 className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 focus:outline-none focus:border-white/20"
               />
             </div>
             <button
+              onClick={handleAddLink}
               className="bg-white/10 hover:bg-white/20 text-white px-6 rounded-xl font-bold transition-all"
             >
               Add Link

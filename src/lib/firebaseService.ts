@@ -110,8 +110,10 @@ export const subscribeToRoom = (code: string, callback: (state: RoomState) => vo
 export const toggleFavorite = async (userId: string, item: QueueItem, isFavorite: boolean) => {
   const userRef = doc(db, 'users', userId);
   const userSnap = await getDoc(userRef);
+  
   if (!userSnap.exists()) {
-    await setDoc(userRef, { favorites: [] });
+    await setDoc(userRef, { favorites: [item] });
+    return;
   }
   
   if (isFavorite) {
