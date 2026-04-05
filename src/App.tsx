@@ -1,48 +1,75 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart, LogIn } from "lucide-react";
+import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart, LogIn, Pause } from "lucide-react";
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube from 'react-youtube';
 
 // --- Mood Background ---
-const MoodBackground = ({ mood }: { mood: string }) => {
+const MoodBackground = ({ mood, thumbnail }: { mood: string; thumbnail?: string | null }) => {
   const colors = {
     happy: ["#FFD700", "#FF8C00", "#FF4500"],
     sad: ["#4682B4", "#191970", "#00008B"],
     energetic: ["#FF00FF", "#00FFFF", "#7FFF00"],
     calm: ["#98FB98", "#AFEEEE", "#E0FFFF"],
-    default: ["#333333", "#111111", "#000000"],
+    default: ["#6366f1", "#a855f7", "#ec4899"], // More vibrant default
   };
 
   const selectedColors = (colors as any)[mood] || colors.default;
 
   return (
     <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505]">
-      {selectedColors.map((color: string, i: number) => (
-        <motion.div
-          key={`${mood}-${i}`}
-          className="absolute rounded-full mix-blend-screen filter blur-[100px] opacity-30"
-          style={{
-            backgroundColor: color,
-            width: "50vw",
-            height: "50vw",
-            top: i === 0 ? "-10%" : i === 1 ? "40%" : "60%",
-            left: i === 0 ? "-10%" : i === 1 ? "60%" : "10%",
-          }}
-          animate={{
-            x: [0, 100, -50, 0],
-            y: [0, -100, 50, 0],
-            scale: [1, 1.2, 0.8, 1],
-          }}
-          transition={{
-            duration: 15 + i * 5,
-            repeat: Infinity,
-            repeatType: "reverse",
-            ease: "easeInOut",
-          }}
-        />
-      ))}
+      {/* Dynamic Thumbnail Background */}
+      <AnimatePresence mode="wait">
+        {thumbnail && (
+          <motion.div
+            key={thumbnail}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.4 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 2 }}
+            className="absolute inset-0 z-0"
+          >
+            <img 
+              src={thumbnail} 
+              className="w-full h-full object-cover blur-[100px] scale-150" 
+              alt="" 
+              referrerPolicy="no-referrer"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Animated Blobs */}
+      <div className="absolute inset-0 z-10">
+        {selectedColors.map((color: string, i: number) => (
+          <motion.div
+            key={`${mood}-${i}`}
+            className="absolute rounded-full mix-blend-screen filter blur-[120px] opacity-40"
+            style={{
+              backgroundColor: color,
+              width: "60vw",
+              height: "60vw",
+              top: i === 0 ? "-20%" : i === 1 ? "30%" : "50%",
+              left: i === 0 ? "-20%" : i === 1 ? "50%" : "0%",
+            }}
+            animate={{
+              x: [0, 150, -100, 0],
+              y: [0, -150, 100, 0],
+              scale: [1, 1.3, 0.7, 1],
+            }}
+            transition={{
+              duration: 20 + i * 8,
+              repeat: Infinity,
+              repeatType: "reverse",
+              ease: "easeInOut",
+            }}
+          />
+        ))}
+      </div>
+      
+      {/* Dark Overlay to ensure text readability */}
+      <div className="absolute inset-0 bg-black/40 z-20" />
     </div>
   );
 };
@@ -814,14 +841,24 @@ export default function App() {
 
       setIsLoadingManifest(true);
       setAudioUrl(null); // Clear previous URL immediately to prevent stale playback
+      setMood("default"); // Reset mood for new track
       fetchTidalManifest(room.currentMedia.item.trackId).finally(() => {
         setIsLoadingManifest(false);
       });
       fetchRecommendations(room.currentMedia.item.trackId);
+      fetchLyrics(room.currentMedia.item.trackId);
+    } else if (room?.currentMedia.item?.type === "youtube") {
+      setIsLoadingManifest(false);
+      setAudioUrl(null);
+      setRecommendations([]);
+      // Set a random mood for YouTube tracks
+      const fallbackMoods = ["happy", "energetic", "calm", "energetic"];
+      setMood(fallbackMoods[Math.floor(Math.random() * fallbackMoods.length)]);
     } else {
       setIsLoadingManifest(false);
       setAudioUrl(null);
       setRecommendations([]);
+      setMood("default");
     }
   }, [room?.currentMedia.item?.id, audioQuality]);
 
@@ -946,10 +983,24 @@ export default function App() {
   const handleToggleFavorite = async (item: QueueItem) => {
     if (!user?.id || !auth.currentUser) {
       setNotifications((prev) => [...prev, "Please sign in with Google to save favorites."]);
+      setIsEditingProfile(true);
+      setProfileTab("edit");
       return;
     }
     const isFav = favorites.some(f => f.id === item.id);
-    await toggleFavorite(user.id, item, isFav);
+    // Use a simplified version of the item to ensure arrayRemove works correctly
+    const favoriteItem = {
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      artist: item.artist || "",
+      thumbnail: item.thumbnail,
+      duration: item.duration,
+      addedBy: item.addedBy,
+      videoId: item.videoId || "",
+      trackId: item.trackId || ""
+    };
+    await toggleFavorite(user.id, favoriteItem as any, isFav);
   };
 
   const playFavoriteList = () => {
@@ -1023,6 +1074,9 @@ export default function App() {
       setMood(mood);
     } catch (err) {
       console.error(err);
+      // Fallback to a random mood if analysis fails
+      const fallbackMoods = ["happy", "energetic", "calm"];
+      setMood(fallbackMoods[Math.floor(Math.random() * fallbackMoods.length)]);
     }
   };
 
@@ -1129,7 +1183,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#050505]">
-      <MoodBackground mood={mood} />
+      <MoodBackground mood={mood} thumbnail={room.currentMedia.item?.thumbnail} />
       <audio 
         ref={audioRef} 
         src={audioUrl || undefined} 
@@ -1381,7 +1435,7 @@ export default function App() {
                     onClick={togglePlay}
                     className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
                   >
-                    {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
+                    {room.currentMedia.playing ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
                   </button>
                   <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
                   <button 
@@ -1459,7 +1513,7 @@ export default function App() {
                       onClick={togglePlay}
                       className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 transition-transform"
                     >
-                      {room.currentMedia.playing ? <div className="flex gap-1.5"><div className="w-2 h-8 bg-black rounded-full"/><div className="w-2 h-8 bg-black rounded-full"/></div> : <Play size={28} fill="currentColor" />}
+                      {room.currentMedia.playing ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
                     </button>
                     <button onClick={skipNext} className="text-white hover:scale-110 transition-transform"><ChevronRight size={32} /></button>
                     <button 
