@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart } from "lucide-react";
+import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart, LogIn } from "lucide-react";
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
@@ -557,6 +557,24 @@ export default function App() {
     };
   }, []);
 
+  const handleGoogleLogin = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const u = result.user;
+      const newUser = {
+        id: u.uid,
+        name: u.displayName || "Anonymous",
+        avatar: u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.uid}`
+      };
+      setUser(newUser);
+      localStorage.setItem("sync-me-user", JSON.stringify(newUser));
+      setNotifications((prev) => [...prev, `Welcome back, ${newUser.name}!`]);
+    } catch (error) {
+      console.error("Google Login Error:", error);
+      setNotifications((prev) => [...prev, "Login failed. Please try again."]);
+    }
+  };
+
   const updateProfile = () => {
     if (!tempName || !tempAvatar) return;
     const updatedUser = { ...user!, name: tempName, avatar: tempAvatar };
@@ -808,25 +826,56 @@ export default function App() {
   }, [room?.currentMedia.item?.id, audioQuality]);
 
   useEffect(() => {
-    if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
-      if (room?.currentMedia.playing && !isLoadingManifest) {
-        // Only attempt to play if we have a source or if it's DASH (Shaka)
+    if (!room || isLoadingManifest) return;
+
+    const handleTidalPlayback = async () => {
+      if (!audioRef.current || room.currentMedia.item?.type !== "tidal") return;
+
+      const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
+      const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
+
+      // 1. Handle Seeking first
+      if (Math.abs(audioRef.current.currentTime - targetTime) > 2) {
+        audioRef.current.currentTime = targetTime;
+      }
+
+      // 2. Handle Playing/Pausing
+      if (room.currentMedia.playing) {
         if (audioUrl || shakaPlayerRef.current) {
-          audioRef.current.play().catch((err) => {
+          try {
+            await audioRef.current.play();
+          } catch (err) {
             console.warn("Playback failed:", err);
-          });
+          }
         }
       } else {
         audioRef.current.pause();
       }
-    } else if (youtubePlayerRef.current && room?.currentMedia.item?.type === "youtube") {
-      if (room?.currentMedia.playing) {
+    };
+
+    const handleYoutubePlayback = () => {
+      if (!youtubePlayerRef.current || room.currentMedia.item?.type !== "youtube") return;
+
+      const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
+      const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
+
+      // 1. Handle Seeking first
+      const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
+      if (Math.abs(ytTime - targetTime) > 2) {
+        youtubePlayerRef.current.seekTo(targetTime, true);
+      }
+
+      // 2. Handle Playing/Pausing
+      if (room.currentMedia.playing) {
         youtubePlayerRef.current.playVideo();
       } else {
         youtubePlayerRef.current.pauseVideo();
       }
-    }
-  }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.item?.id, isLoadingManifest]);
+    };
+
+    handleTidalPlayback();
+    handleYoutubePlayback();
+  }, [room?.currentMedia.playing, audioUrl, room?.currentMedia.item?.id, isLoadingManifest, room?.currentMedia.lastUpdated, room?.currentMedia.currentTime]);
 
   useEffect(() => {
     let interval: any;
@@ -841,23 +890,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [room?.currentMedia.item?.type, room?.currentMedia.playing, isDragging]);
 
-  useEffect(() => {
-    if (room?.currentMedia.currentTime !== undefined && !isLoadingManifest) {
-      const timeDiff = (Date.now() - room.currentMedia.lastUpdated) / 1000;
-      const targetTime = room.currentMedia.playing ? room.currentMedia.currentTime + timeDiff : room.currentMedia.currentTime;
-      
-      if (audioRef.current && room?.currentMedia.item?.type === "tidal") {
-        if (Math.abs(audioRef.current.currentTime - targetTime) > 2) {
-          audioRef.current.currentTime = targetTime;
-        }
-      } else if (youtubePlayerRef.current && room?.currentMedia.item?.type === "youtube") {
-        const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
-        if (Math.abs(ytTime - targetTime) > 2) {
-          youtubePlayerRef.current.seekTo(targetTime, true);
-        }
-      }
-    }
-  }, [room?.currentMedia.currentTime, room?.currentMedia.lastUpdated, audioUrl, room?.currentMedia.playing, isLoadingManifest]);
 
   const searchMedia = async () => {
     if (!searchQuery) return;
@@ -1695,6 +1727,18 @@ export default function App() {
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
                     />
                   </div>
+
+                  {user?.id === "" && (
+                    <div className="pt-4 border-t border-white/10">
+                      <p className="text-xs text-gray-500 mb-3 text-center">Sign in to save favorites and sync across devices</p>
+                      <button
+                        onClick={handleGoogleLogin}
+                        className="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
+                      >
+                        <LogIn size={18} /> Login with Google
+                      </button>
+                    </div>
+                  )}
 
                   <button
                     onClick={updateProfile}
