@@ -629,6 +629,15 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [notifications, setNotifications] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (notifications.length > 0) {
+      const timer = setTimeout(() => {
+        setNotifications(prev => prev.slice(1));
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notifications]);
   const [lyrics, setLyrics] = useState<{ lyrics: string; subtitles: string } | null>(null);
   const [showLyrics, setShowLyrics] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -728,11 +737,14 @@ export default function App() {
   };
 
   const skipNext = () => {
+    console.log("skipNext called, room:", room);
     if (!room) return;
     
     let nextItem: any = null;
     let newQueue = [...room.queue];
     let newHistory = [...room.history];
+    
+    console.log("Queue length:", newQueue.length);
 
     // 1. If Repeat One is on, just loop the current song
     if (room.repeatMode === "one" && room.currentMedia.item) {
@@ -1326,6 +1338,10 @@ export default function App() {
       trackId: item.id || item.trackId,
     };
     addToQueueService(room.code, queueItem);
+    
+    if (!room.currentMedia.item) {
+      playNow(queueItem);
+    }
   };
 
   const handleToggleFavorite = async (item: QueueItem) => {
@@ -1336,27 +1352,28 @@ export default function App() {
       return;
     }
     
-    const existingFav = favorites.find(f => 
-      (f.videoId && (f.videoId === item.videoId || f.videoId === item.id)) || 
-      (f.trackId && (f.trackId === item.trackId || f.trackId === item.id))
-    );
+    const existingFav = favorites.find(f => f.id === item.id);
     const isFav = !!existingFav;
 
     // Use a simplified version of the item to ensure arrayRemove works correctly
     // We use the original item's videoId/trackId as the stable ID for favorites
     const favoriteItem = {
-      id: item.videoId || item.trackId || item.id, // Use stable ID
-      type: item.type || (activeTab === "youtube" ? "youtube" : "tidal"),
-      title: item.title || (item as any).name,
-      artist: (item as any).artist?.name || (item as any).author?.name || (item as any).publisher || item.artist || "Unknown",
-      thumbnail: (item as any).thumbnail?.url || ((item as any).album?.cover ? `https://resources.tidal.com/images/${(item as any).album.cover.replace(/-/g, '/')}/640x640.jpg` : ((item as any).thumbnails?.[0]?.url || item.thumbnail || undefined)),
-      duration: item.duration || 0,
-      addedBy: item.addedBy || user?.name || "Guest",
-      videoId: item.videoId || (item.type === "youtube" ? item.id : ""),
-      trackId: item.trackId || (item.type === "tidal" ? item.id : "")
+      id: item.id, // Use stable ID
+      type: item.type,
+      title: item.title,
+      artist: item.artist,
+      thumbnail: item.thumbnail,
+      duration: item.duration,
+      addedBy: item.addedBy,
+      videoId: item.videoId,
+      trackId: item.trackId
     };
     
     await toggleFavorite(user.id, (isFav ? existingFav : favoriteItem) as any, isFav);
+    if (!isFav) {
+      addToQueue(favoriteItem);
+      setNotifications(prev => [...prev, `Added ${favoriteItem.title} to queue!`]);
+    }
   };
 
   const playFavoriteList = () => {
@@ -1448,6 +1465,9 @@ export default function App() {
                 trackId: track.id
               }));
               addTracksToQueueService(room.code, items);
+              if (!room.currentMedia.item) {
+                playNow(items[0]);
+              }
               setLinkInput("");
               setNotifications(prev => [...prev, `TIDAL playlist added (${tracks.length} tracks)!`]);
             } else {
@@ -1596,7 +1616,7 @@ export default function App() {
                     <h4 className="text-sm font-bold truncate">{item.title}</h4>
                     <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <div className="flex gap-1 opacity-100 transition-all">
                     <button 
                       onClick={() => handleToggleFavorite(item)} 
                       className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white"
