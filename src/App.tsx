@@ -819,6 +819,17 @@ export default function App() {
     }
   };
 
+  const handleEnded = () => {
+    if (!room || !user) return;
+    const isAdder = room.currentMedia.item?.addedBy === user.name;
+    const isFirstUser = room.users[0]?.id === user.id;
+    const adderExists = room.users.some(u => u.name === room.currentMedia.item?.addedBy);
+    
+    if (isAdder || (!adderExists && isFirstUser)) {
+      skipNext();
+    }
+  };
+
   const skipPrevious = () => {
     if (!room || room.history.length === 0) return;
     
@@ -1415,16 +1426,20 @@ export default function App() {
       setNotifications((prev) => [...prev, "Please sign in with Google to play favorites."]);
       return;
     }
-    if (favorites.length === 0) return;
+    if (favorites.length === 0 || !room) return;
     
-    // Add all favorites to queue
-    favorites.forEach(fav => {
-      addToQueue(fav);
-    });
+    // Create new queue items with new IDs to avoid conflicts
+    const itemsToAdd = favorites.map(fav => ({
+      ...fav,
+      id: Math.random().toString(36).substring(7),
+      addedBy: user?.name || "Guest"
+    }));
+    
+    addTracksToQueueService(room.code, itemsToAdd);
     
     // If nothing is playing, play the first one
-    if (!room?.currentMedia.playing && favorites.length > 0) {
-      playNow(favorites[0]);
+    if (!room.currentMedia.item) {
+      playNow(itemsToAdd[0]);
     }
     setShowProfile(false);
   };
@@ -1488,22 +1503,30 @@ export default function App() {
             else if (Array.isArray(data?.data)) tracks = data.data;
 
             if (tracks.length > 0) {
-              const items = tracks.map((track: any) => ({
-                id: Math.random().toString(36).substring(7),
-                type: "tidal" as "tidal",
-                title: track.title,
-                artist: track.artist?.name || track.artist || "Unknown Artist",
-                thumbnail: track.album?.cover ? `https://resources.tidal.com/images/${track.album.cover.replace(/-/g, '/')}/640x640.jpg` : "",
-                duration: track.duration,
-                addedBy: user?.name || "Guest",
-                trackId: track.id
-              }));
-              addTracksToQueueService(room.code, items);
-              if (!room.currentMedia.item) {
-                playNow(items[0]);
+              const items = tracks.map((t: any) => {
+                const track = t.item || t;
+                return {
+                  id: Math.random().toString(36).substring(7),
+                  type: "tidal" as "tidal",
+                  title: track.title || "Unknown Title",
+                  artist: track.artist?.name || track.artist || "Unknown Artist",
+                  thumbnail: track.album?.cover ? `https://resources.tidal.com/images/${track.album.cover.replace(/-/g, '/')}/640x640.jpg` : "",
+                  duration: track.duration || 0,
+                  addedBy: user?.name || "Guest",
+                  trackId: track.id
+                };
+              }).filter((item: any) => item.trackId); // Filter out any invalid items
+              
+              if (items.length > 0) {
+                addTracksToQueueService(room.code, items);
+                if (!room.currentMedia.item) {
+                  playNow(items[0]);
+                }
+                setLinkInput("");
+                setNotifications(prev => [...prev, `TIDAL playlist added (${items.length} tracks)!`]);
+              } else {
+                setNotifications(prev => [...prev, "Failed to parse TIDAL playlist items."]);
               }
-              setLinkInput("");
-              setNotifications(prev => [...prev, `TIDAL playlist added (${tracks.length} tracks)!`]);
             } else {
               setNotifications(prev => [...prev, "Failed to fetch TIDAL playlist items or playlist is empty."]);
             }
@@ -1704,7 +1727,7 @@ export default function App() {
           ref={audioRef} 
           src={audioUrl || undefined} 
           crossOrigin="anonymous"
-          onEnded={skipNext}
+          onEnded={handleEnded}
         />
         <Sidebar 
           activeTab={activeTab} 
@@ -1793,7 +1816,7 @@ export default function App() {
                   }}
                   onStateChange={(e) => {
                     if (e.data === YouTube.PlayerState.ENDED) {
-                      skipNext();
+                      handleEnded();
                     } else if (e.data === YouTube.PlayerState.PLAYING && !room.currentMedia.playing) {
                       syncMedia(room.code, { ...room.currentMedia, playing: true, currentTime: e.target.getCurrentTime() });
                     } else if (e.data === YouTube.PlayerState.PAUSED && room.currentMedia.playing) {
