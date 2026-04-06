@@ -64,7 +64,7 @@ class ErrorBoundary extends React.Component<any, any> {
     return this.props.children;
   }
 }
-import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
+import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, addTracksToQueue as addTracksToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube from 'react-youtube';
@@ -1437,19 +1437,17 @@ export default function App() {
             else if (Array.isArray(data?.data)) tracks = data.data;
 
             if (tracks.length > 0) {
-              for (const track of tracks) {
-                const item = {
-                  id: track.id,
-                  type: "tidal",
-                  title: track.title,
-                  artist: track.artist?.name || track.artist || "Unknown Artist",
-                  thumbnail: track.album?.cover ? `https://resources.tidal.com/images/${track.album.cover.replace(/-/g, '/')}/640x640.jpg` : undefined,
-                  duration: track.duration,
-                  addedBy: user?.name || "Guest",
-                  trackId: track.id
-                };
-                addToQueue(item as any);
-              }
+              const items = tracks.map((track: any) => ({
+                id: Math.random().toString(36).substring(7),
+                type: "tidal" as "tidal",
+                title: track.title,
+                artist: track.artist?.name || track.artist || "Unknown Artist",
+                thumbnail: track.album?.cover ? `https://resources.tidal.com/images/${track.album.cover.replace(/-/g, '/')}/640x640.jpg` : "",
+                duration: track.duration,
+                addedBy: user?.name || "Guest",
+                trackId: track.id
+              }));
+              addTracksToQueueService(room.code, items);
               setLinkInput("");
               setNotifications(prev => [...prev, `TIDAL playlist added (${tracks.length} tracks)!`]);
             } else {

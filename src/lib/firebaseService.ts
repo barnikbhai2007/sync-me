@@ -141,6 +141,18 @@ export const addToQueue = async (code: string, item: QueueItem) => {
   }
 };
 
+export const addTracksToQueue = async (code: string, items: QueueItem[]) => {
+  const roomRef = doc(db, 'rooms', code);
+  try {
+    await updateDoc(roomRef, {
+      queue: arrayUnion(...items),
+      logs: arrayUnion(`${items[0].addedBy} added ${items.length} tracks to queue`)
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `rooms/${code}`);
+  }
+};
+
 export const removeFromQueue = async (code: string, itemId: string, title?: string, removedBy?: string) => {
   const roomRef = doc(db, 'rooms', code);
   try {
