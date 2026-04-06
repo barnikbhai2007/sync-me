@@ -174,13 +174,22 @@ export const removeFromQueue = async (code: string, itemId: string, title?: stri
 export const playNow = async (code: string, item: QueueItem, playedBy?: string) => {
   const roomRef = doc(db, 'rooms', code);
   try {
-    const updates: any = {
-      currentMedia: { item, playing: true, currentTime: 0, lastUpdated: Date.now(), type: item.type }
-    };
-    if (playedBy) {
-      updates.logs = arrayUnion(`${playedBy} started playing ${item.title}`);
+    const roomSnap = await getDoc(roomRef);
+    if (roomSnap.exists()) {
+      const roomData = roomSnap.data();
+      const updates: any = {
+        currentMedia: { item, playing: true, currentTime: 0, lastUpdated: Date.now(), type: item.type }
+      };
+      
+      if (roomData.currentMedia?.item) {
+        updates.history = arrayUnion(roomData.currentMedia.item);
+      }
+      
+      if (playedBy) {
+        updates.logs = arrayUnion(`${playedBy} started playing ${item.title}`);
+      }
+      await updateDoc(roomRef, updates);
     }
-    await updateDoc(roomRef, updates);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `rooms/${code}`);
   }

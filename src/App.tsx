@@ -219,7 +219,7 @@ const Sidebar = React.memo(({ activeTab, switchTab, room, user, setIsEditingProf
       </div>
       <div className="flex md:flex-col gap-4 items-center">
         <button 
-          onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications((prev: any) => [...prev, "Link copied!"]); setTimeout(() => setNotifications((prev: any) => prev.slice(1)), 2000); }}
+          onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications((prev: any) => [...prev, "Link copied!"]); }}
           className="w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5"
         >
           <Share2 size={20} />
@@ -323,13 +323,6 @@ const Header = React.memo(({ room, user, activeTab, searchQuery, setSearchQuery,
                         </p>
                       </div>
                       <div className="flex gap-3 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
-                        <button 
-                          onClick={() => handleToggleFavorite(item)}
-                          className="p-4 md:p-3 bg-white/5 text-white rounded-2xl md:rounded-xl hover:bg-white/10 active:scale-90 transition-all border border-white/10"
-                          title="Favorite"
-                        >
-                          <Heart size={20} className={cn("md:w-4 md:h-4", favorites.some(f => f.id === item.id) ? "fill-red-500 text-red-500" : "")} />
-                        </button>
                         <button 
                           onClick={() => { playNow(item); setSearchResults([]); }} 
                           className="p-4 md:p-3 bg-white text-black rounded-2xl md:rounded-xl hover:scale-110 active:scale-90 transition-transform shadow-xl"
@@ -1001,7 +994,6 @@ export default function App() {
           const newLog = state.logs[state.logs.length - 1];
           if (!newLog.startsWith("emoji:")) {
             setNotifications((prev) => [...prev, newLog]);
-            setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
           }
         }
         
@@ -1357,13 +1349,11 @@ export default function App() {
       setSearchResults(Array.isArray(results) ? results : []);
       if (results.length === 0) {
         setNotifications((prev) => [...prev, `${activeTab === "youtube" ? "YouTube" : "Tidal"} search returned no results.`]);
-        setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
       }
     } catch (err: any) {
       console.error("Search error:", err);
       const errorMessage = err.response?.data?.error || err.message || "Unknown error";
       setNotifications((prev) => [...prev, `Search failed: ${errorMessage}`]);
-      setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
     } finally {
       setIsSearching(false);
     }
@@ -1382,10 +1372,11 @@ export default function App() {
       videoId: item.id || item.videoId,
       trackId: item.id || item.trackId,
     };
-    addToQueueService(room.code, queueItem);
     
     if (!room.currentMedia.item) {
       playNow(queueItem);
+    } else {
+      addToQueueService(room.code, queueItem);
     }
   };
 
@@ -1415,9 +1406,10 @@ export default function App() {
     };
     
     await toggleFavorite(user.id, (isFav ? existingFav : favoriteItem) as any, isFav);
-    if (!isFav) {
-      addToQueue(favoriteItem);
-      setNotifications(prev => [...prev, `Added ${favoriteItem.title} to queue!`]);
+    if (isFav) {
+      setNotifications(prev => [...prev, `Removed ${favoriteItem.title} from favorites!`]);
+    } else {
+      setNotifications(prev => [...prev, `Added ${favoriteItem.title} to favorites!`]);
     }
   };
 
@@ -1435,12 +1427,15 @@ export default function App() {
       addedBy: user?.name || "Guest"
     }));
     
-    addTracksToQueueService(room.code, itemsToAdd);
-    
-    // If nothing is playing, play the first one
     if (!room.currentMedia.item) {
       playNow(itemsToAdd[0]);
+      if (itemsToAdd.length > 1) {
+        addTracksToQueueService(room.code, itemsToAdd.slice(1));
+      }
+    } else {
+      addTracksToQueueService(room.code, itemsToAdd);
     }
+    
     setShowProfile(false);
   };
   const playNow = (item: any) => {
@@ -1518,9 +1513,13 @@ export default function App() {
               }).filter((item: any) => item.trackId); // Filter out any invalid items
               
               if (items.length > 0) {
-                addTracksToQueueService(room.code, items);
                 if (!room.currentMedia.item) {
                   playNow(items[0]);
+                  if (items.length > 1) {
+                    addTracksToQueueService(room.code, items.slice(1));
+                  }
+                } else {
+                  addTracksToQueueService(room.code, items);
                 }
                 setLinkInput("");
                 setNotifications(prev => [...prev, `TIDAL playlist added (${items.length} tracks)!`]);
@@ -1674,12 +1673,6 @@ export default function App() {
                     <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
                   </div>
                   <div className="flex gap-1 opacity-100 transition-all">
-                    <button 
-                      onClick={() => handleToggleFavorite(item)} 
-                      className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white"
-                    >
-                      <Heart size={14} className={favorites.some(f => f.id === item.id) ? "fill-red-500 text-red-500" : ""} />
-                    </button>
                     <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
                       <Play size={14} fill="currentColor" />
                     </button>
@@ -2264,12 +2257,32 @@ export default function App() {
                             <p className="font-bold text-sm truncate">{fav.title}</p>
                             <p className="text-xs text-gray-400 truncate">{fav.artist}</p>
                           </div>
-                          <button 
-                            onClick={() => handleToggleFavorite(fav)}
-                            className="p-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Heart size={18} className="fill-red-500" />
-                          </button>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                addToQueue(fav);
+                                setNotifications(prev => [...prev, `Added ${fav.title} to queue!`]);
+                              }}
+                              className="p-2 text-white hover:bg-white/10 rounded-lg"
+                            >
+                              <Plus size={18} />
+                            </button>
+                            <button 
+                              onClick={() => {
+                                playNow(fav);
+                                setIsEditingProfile(false);
+                              }}
+                              className="p-2 text-white hover:bg-white/10 rounded-lg"
+                            >
+                              <Play size={18} fill="currentColor" />
+                            </button>
+                            <button 
+                              onClick={() => handleToggleFavorite(fav)}
+                              className="p-2 text-red-500 hover:bg-white/10 rounded-lg"
+                            >
+                              <Heart size={18} className="fill-red-500" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
