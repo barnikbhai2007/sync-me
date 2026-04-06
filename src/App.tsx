@@ -162,14 +162,14 @@ const ProgressBar = React.memo(({ localTime, duration, handleSeek, handleSeekEnd
 const LyricsView = React.memo(({ showLyrics, currentLyric, parsedLyrics, lyricRefs }: any) => {
   if (!showLyrics) return null;
   return (
-    <div className="h-[60vh] overflow-y-auto custom-scrollbar space-y-12 px-4 py-[20vh]">
+    <div className="h-[60vh] overflow-y-auto custom-scrollbar space-y-12 px-4 py-[20vh] [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]">
       {parsedLyrics.length > 0 ? (
         parsedLyrics.map((line: any, i: number) => (
           <p
             key={i}
             ref={(el) => (lyricRefs.current[i] = el)}
             className={cn(
-              "text-4xl md:text-7xl font-black transition-all duration-700 leading-tight tracking-tighter text-center",
+              "text-2xl md:text-4xl font-black transition-all duration-700 leading-tight tracking-tighter text-center",
               currentLyric?.time === line.time 
                 ? "text-white scale-110 opacity-100 drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]" 
                 : "text-white/40 opacity-50 blur-[1px]"
@@ -328,7 +328,7 @@ const Header = React.memo(({ room, user, activeTab, searchQuery, setSearchQuery,
                           className="p-4 md:p-3 bg-white/5 text-white rounded-2xl md:rounded-xl hover:bg-white/10 active:scale-90 transition-all border border-white/10"
                           title="Favorite"
                         >
-                          <Heart size={20} className={cn("md:w-4 md:h-4", favorites.some((f: any) => (f.videoId && f.videoId === item.id) || (f.trackId && f.trackId === item.id)) ? "fill-red-500 text-red-500" : "")} />
+                          <Heart size={20} className={cn("md:w-4 md:h-4", favorites.some(f => f.id === item.id) ? "fill-red-500 text-red-500" : "")} />
                         </button>
                         <button 
                           onClick={() => { playNow(item); setSearchResults([]); }} 
@@ -1603,7 +1603,7 @@ export default function App() {
                       onClick={() => handleToggleFavorite(item)} 
                       className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white"
                     >
-                      <Heart size={14} className={favorites.some(f => (f.videoId && f.videoId === item.videoId) || (f.trackId && f.trackId === item.trackId)) ? "fill-red-500 text-red-500" : ""} />
+                      <Heart size={14} className={favorites.some(f => f.id === item.id) ? "fill-red-500 text-red-500" : ""} />
                     </button>
                     <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
                       <Play size={14} fill="currentColor" />
@@ -1761,7 +1761,7 @@ export default function App() {
                         onClick={() => handleToggleFavorite(room.currentMedia.item!)}
                         className="text-white hover:text-red-500 transition-colors"
                       >
-                        <Heart size={20} className={favorites.some(f => (f.videoId && f.videoId === room.currentMedia.item?.videoId) || (f.trackId && f.trackId === room.currentMedia.item?.trackId)) ? "fill-red-500 text-red-500" : ""} />
+                        <Heart size={20} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
                       </button>
                     </div>
                     <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
@@ -1827,7 +1827,7 @@ export default function App() {
                         onClick={() => handleToggleFavorite(room.currentMedia.item!)}
                         className="text-white hover:text-red-500 transition-colors mt-2"
                       >
-                        <Heart size={32} className={favorites.some(f => (f.videoId && f.videoId === room.currentMedia.item?.videoId) || (f.trackId && f.trackId === room.currentMedia.item?.trackId)) ? "fill-red-500 text-red-500" : ""} />
+                        <Heart size={32} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
                       </button>
                     </div>
                     <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
