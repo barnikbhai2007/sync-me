@@ -1,95 +1,396 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart, LogIn, Pause } from "lucide-react";
+import * as React from "react";
+import { useState, useEffect, useRef, ErrorInfo, ReactNode } from "react";
+import { Search, Play, Plus, Youtube, Music, Gamepad2, Send, Users, ListMusic, MessageSquare, History, X, ChevronRight, ChevronLeft, Repeat, Shuffle, Mic2, Volume2, Share2, Menu, Heart, LogIn, Pause, AlertCircle } from "lucide-react";
+
+// --- Error Boundary Component ---
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends React.Component<any, any> {
+  state: any;
+  props: any;
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): any {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Something went wrong.";
+      try {
+        const parsedError = JSON.parse(this.state.error?.message || "{}");
+        if (parsedError.error) {
+          errorMessage = `Firestore Error: ${parsedError.error} (Op: ${parsedError.operationType})`;
+        }
+      } catch (e) {
+        errorMessage = this.state.error?.message || errorMessage;
+      }
+
+      return (
+        <div className="min-h-screen bg-[#050505] flex items-center justify-center p-8">
+          <div className="glass p-8 rounded-3xl max-w-md w-full text-center space-y-6">
+            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle size={32} className="text-red-500" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-white">Application Error</h2>
+              <p className="text-gray-400 text-sm">{errorMessage}</p>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-all"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 import { joinRoom as joinRoomService, subscribeToRoom, updateRoomState, syncMedia, addToQueue as addToQueueService, removeFromQueue as removeFromQueueService, playNow as playNowService, sendMessage as sendMessageService, sendEmoji as sendEmojiService, toggleFavorite, subscribeToFavorites } from "./lib/firebaseService";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
 import YouTube from 'react-youtube';
 
 // --- Mood Background ---
-const MoodBackground = ({ mood, thumbnail }: { mood: string; thumbnail?: string | null }) => {
+const MoodBackground = React.memo(({ mood, thumbnail }: { mood: string; thumbnail?: string | null }) => {
   const colors = {
-    happy: ["#FFD700", "#FF8C00", "#FF4500"],
-    sad: ["#4682B4", "#191970", "#00008B"],
-    energetic: ["#FF00FF", "#00FFFF", "#7FFF00"],
-    calm: ["#98FB98", "#AFEEEE", "#E0FFFF"],
-    default: ["#6366f1", "#a855f7", "#ec4899"], // More vibrant default
+    happy: ["#FFD700", "#FF8C00"],
+    sad: ["#4682B4", "#191970"],
+    energetic: ["#FF00FF", "#00FFFF"],
+    calm: ["#98FB98", "#AFEEEE"],
+    default: ["#6366f1", "#ec4899"],
   };
 
   const selectedColors = (colors as any)[mood] || colors.default;
 
   return (
-    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505]">
-      {/* Dynamic Thumbnail Background - Multiple Layers for Depth */}
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#050505] transform-gpu">
       <AnimatePresence mode="wait">
         {thumbnail && (
-          <>
-            <motion.div
-              key={`${thumbnail}-bg-1`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.3 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 2 }}
-              className="absolute inset-0 z-0"
-            >
-              <img 
-                src={thumbnail} 
-                className="w-full h-full object-cover blur-[80px] scale-125" 
-                alt="" 
-                referrerPolicy="no-referrer"
-              />
-            </motion.div>
-            <motion.div
-              key={`${thumbnail}-bg-2`}
-              initial={{ opacity: 0, scale: 1.5 }}
-              animate={{ opacity: 0.2, scale: 1.8 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 3 }}
-              className="absolute inset-0 z-0"
-            >
-              <img 
-                src={thumbnail} 
-                className="w-full h-full object-cover blur-[120px] rotate-12" 
-                alt="" 
-                referrerPolicy="no-referrer"
-              />
-            </motion.div>
-          </>
+          <motion.div
+            key={`${thumbnail}-bg-1`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.25 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.2 }}
+            className="absolute inset-0 z-0 will-change-transform"
+          >
+            <img 
+              src={thumbnail} 
+              className="w-full h-full object-cover blur-[40px] scale-110" 
+              alt="" 
+              referrerPolicy="no-referrer"
+            />
+          </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Animated Blobs */}
       <div className="absolute inset-0 z-10">
-        {selectedColors.map((color: string, i: number) => (
+        {selectedColors.slice(0, 1).map((color: string, i: number) => (
           <motion.div
             key={`${mood}-${i}`}
-            className="absolute rounded-full mix-blend-screen filter blur-[120px] opacity-30"
+            className="absolute rounded-full mix-blend-screen filter blur-[60px] opacity-10 will-change-transform"
             style={{
               backgroundColor: color,
               width: "70vw",
               height: "70vw",
-              top: i === 0 ? "-30%" : i === 1 ? "40%" : "60%",
-              left: i === 0 ? "-30%" : i === 1 ? "60%" : "10%",
+              top: "-20%",
+              left: "-20%",
             }}
             animate={{
-              x: [0, 200, -150, 0],
-              y: [0, -200, 150, 0],
-              scale: [1, 1.4, 0.6, 1],
+              x: [0, 30, -20, 0],
+              y: [0, -30, 20, 0],
+              scale: [1, 1.05, 0.95, 1],
             }}
             transition={{
-              duration: 25 + i * 10,
+              duration: 50,
               repeat: Infinity,
               repeatType: "reverse",
-              ease: "easeInOut",
+              ease: "linear",
             }}
           />
         ))}
       </div>
-      
-      {/* Dark Overlay to ensure text readability */}
-      <div className="absolute inset-0 bg-black/50 z-20" />
+      <div className="absolute inset-0 bg-black/60 z-20" />
     </div>
   );
-};
+});
+
+// --- Progress Bar Component ---
+const ProgressBar = React.memo(({ localTime, duration, handleSeek, handleSeekEnd, setIsDragging }: any) => {
+  return (
+    <div className="space-y-4">
+      <input
+        type="range"
+        min="0"
+        max={duration || 100}
+        value={localTime}
+        onMouseDown={() => setIsDragging(true)}
+        onTouchStart={() => setIsDragging(true)}
+        onChange={handleSeek}
+        onMouseUp={handleSeekEnd}
+        onTouchEnd={handleSeekEnd}
+        className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+      />
+      <div className="flex justify-between text-xs text-gray-500 font-mono">
+        <span>{formatTime(localTime)}</span>
+        <span>{formatTime(duration)}</span>
+      </div>
+    </div>
+  );
+});
+
+// --- Lyrics View Component ---
+const LyricsView = React.memo(({ showLyrics, currentLyric, parsedLyrics, lyricRefs }: any) => {
+  if (!showLyrics) return null;
+  return (
+    <div className="h-[60vh] overflow-y-auto custom-scrollbar space-y-12 px-4 py-[20vh]">
+      {parsedLyrics.length > 0 ? (
+        parsedLyrics.map((line: any, i: number) => (
+          <p
+            key={i}
+            ref={(el) => (lyricRefs.current[i] = el)}
+            className={cn(
+              "text-4xl md:text-7xl font-black transition-all duration-700 leading-tight tracking-tighter text-center",
+              currentLyric?.time === line.time 
+                ? "text-white scale-110 opacity-100 drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]" 
+                : "text-white/40 opacity-50 blur-[1px]"
+            )}
+          >
+            {line.text}
+          </p>
+        ))
+      ) : (
+        <p className="text-center text-white/20 italic text-xl">No lyrics found for this track.</p>
+      )}
+    </div>
+  );
+});
+// --- Sidebar Component ---
+const Sidebar = React.memo(({ activeTab, switchTab, room, user, setIsEditingProfile, showMobileSidebar, setShowMobileSidebar, hasNewMessages, setHasNewMessages, setNotifications }: any) => {
+  return (
+    <div className="w-full md:w-20 h-16 md:h-full glass-dark flex md:flex-col items-center justify-around md:justify-start md:py-8 px-4 md:px-0 gap-4 md:gap-8 z-50 order-last md:order-first border-t md:border-t-0 md:border-r border-white/5">
+      <div className="hidden md:flex w-12 h-12 bg-white text-black rounded-2xl items-center justify-center font-black text-xl shadow-lg shadow-white/10">SM</div>
+      <div className="flex md:flex-col gap-4 flex-1 items-center justify-center md:justify-start w-full md:w-auto">
+        <button
+          onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
+          className={cn("md:hidden w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
+        >
+          <MessageSquare size={20} />
+          {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
+        </button>
+        <div className="hidden md:block w-px h-6 bg-white/10 md:w-8 md:h-px mx-2 md:mx-0" />
+        <button
+          onClick={() => switchTab("youtube")}
+          className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "youtube" ? "bg-white text-black shadow-lg shadow-white/10" : "text-gray-500 hover:text-white hover:bg-white/5")}
+        >
+          <Youtube size={20} />
+        </button>
+        <button
+          onClick={() => switchTab("tidal")}
+          className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "tidal" ? "bg-white text-black shadow-lg shadow-white/10" : "text-gray-500 hover:text-white hover:bg-white/5")}
+        >
+          <Music size={20} />
+        </button>
+        <button
+          onClick={() => switchTab("play")}
+          className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "play" ? "bg-white text-black shadow-lg shadow-white/10" : "text-gray-500 hover:text-white hover:bg-white/5")}
+        >
+          <Gamepad2 size={20} />
+        </button>
+      </div>
+      <div className="flex md:flex-col gap-4 items-center">
+        <button 
+          onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications((prev: any) => [...prev, "Link copied!"]); setTimeout(() => setNotifications((prev: any) => prev.slice(1)), 2000); }}
+          className="w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5"
+        >
+          <Share2 size={20} />
+        </button>
+        <button
+          onClick={() => setIsEditingProfile(true)}
+          className="w-10 h-10 md:w-12 md:h-12 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all overflow-hidden"
+        >
+          {user.avatar ? (
+            <img src={user.avatar} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-full h-full bg-white/10 flex items-center justify-center">
+              <Users size={20} className="text-gray-500" />
+            </div>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// --- Header Component ---
+const Header = React.memo(({ room, user, activeTab, searchQuery, setSearchQuery, searchMedia, isSearching, setIsSearching, searchResults, setSearchResults, playNow, addToQueue, setNotifications, showMobileSidebar, setShowMobileSidebar, hasNewMessages, setShowProfile, searchContainerRef, setTempName, setTempAvatar, setIsEditingProfile, favorites, handleToggleFavorite }: any) => {
+  return (
+    <header className="h-16 md:h-20 px-4 md:px-8 flex items-center justify-between glass-dark z-40">
+      <div className="flex items-center gap-2 md:gap-4">
+        <h2 className="text-lg md:text-xl font-bold capitalize">{activeTab}</h2>
+        <div className="hidden md:block px-3 py-1 bg-white/5 rounded-full text-xs font-mono text-gray-400 border border-white/5">
+          ROOM: {room.code}
+        </div>
+      </div>
+      <div className="flex-1 max-w-xl mx-4 md:mx-8 relative" ref={searchContainerRef}>
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                searchMedia();
+              }
+            }}
+            onFocus={() => { if (searchResults.length > 0) setIsSearching(false); }}
+            placeholder={`Search ${activeTab === "youtube" ? "YouTube" : "TIDAL"}...`}
+            className="w-full bg-[#1a1a1a] border border-white/10 rounded-full py-2 pl-10 pr-12 md:py-2.5 md:pl-12 focus:outline-none focus:border-white/20 transition-all text-white text-sm md:text-base"
+          />
+          <button 
+            onClick={searchMedia}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors"
+            title="Search"
+          >
+            <Search size={20} />
+          </button>
+        </div>
+        {/* Search Results Dropdown */}
+        <AnimatePresence>
+          {(searchResults.length > 0 || isSearching) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="fixed md:absolute top-16 md:top-full left-0 right-0 md:mt-2 bg-[#0a0a0a] border-b md:border border-white/10 md:rounded-2xl overflow-hidden shadow-2xl z-[100] h-[calc(100vh-64px)] md:h-auto md:max-h-[70vh] overflow-y-auto"
+            >
+              <div className="p-4 md:p-3 flex justify-between items-center border-b border-white/5 bg-[#0a0a0a] sticky top-0 z-10">
+                <span className="text-sm md:text-xs text-gray-400 px-2 font-bold uppercase tracking-widest">{isSearching ? "Searching..." : "Search Results"}</span>
+                <button onClick={() => setSearchResults([])} className="p-2 md:p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors">
+                  <X size={24} className="md:w-4 md:h-4" />
+                </button>
+              </div>
+              {isSearching ? (
+                <div className="p-16 md:p-12 text-center text-gray-500">
+                  <div className="w-10 h-10 md:w-8 md:h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-6 md:mb-4" />
+                  <p className="text-lg md:text-sm font-medium">Finding the best matches...</p>
+                </div>
+              ) : (
+                <div className="p-2 md:p-1 space-y-1">
+                  {searchResults.map((item: any) => (
+                    <div key={item.id} className="p-4 md:p-3 hover:bg-white/5 flex gap-5 md:gap-4 items-center group rounded-2xl md:rounded-xl transition-all active:scale-[0.98]">
+                      <div className="relative flex-shrink-0">
+                        {item.thumbnail?.url || (item.album?.cover) || (item.thumbnails?.[0]?.url) || item.thumbnail ? (
+                          <img 
+                            src={item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/160x160.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined))} 
+                            className="w-16 h-16 md:w-14 md:h-14 rounded-xl object-cover shadow-2xl border border-white/5" 
+                            alt="" 
+                            referrerPolicy="no-referrer" 
+                          />
+                        ) : (
+                          <div className="w-16 h-16 md:w-14 md:h-14 rounded-xl bg-white/5 flex items-center justify-center">
+                            <Music size={24} className="text-gray-600" />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/20 rounded-xl" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-lg md:text-base leading-tight mb-1 line-clamp-2 md:line-clamp-1 text-white">{item.title || item.name}</h4>
+                        <p className="text-sm md:text-xs text-gray-400 truncate font-medium tracking-wide">
+                          {item.author?.name || item.artist?.name || item.artists?.[0]?.name || "Unknown Artist"}
+                          {item.duration ? ` • ${formatTime(item.duration)}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex gap-3 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
+                        <button 
+                          onClick={() => handleToggleFavorite(item)}
+                          className="p-4 md:p-3 bg-white/5 text-white rounded-2xl md:rounded-xl hover:bg-white/10 active:scale-90 transition-all border border-white/10"
+                          title="Favorite"
+                        >
+                          <Heart size={20} className={cn("md:w-4 md:h-4", favorites.some((f: any) => (f.videoId && f.videoId === item.id) || (f.trackId && f.trackId === item.id)) ? "fill-red-500 text-red-500" : "")} />
+                        </button>
+                        <button 
+                          onClick={() => { playNow(item); setSearchResults([]); }} 
+                          className="p-4 md:p-3 bg-white text-black rounded-2xl md:rounded-xl hover:scale-110 active:scale-90 transition-transform shadow-xl"
+                          title="Play Now"
+                        >
+                          <Play size={20} className="md:w-4 md:h-4" fill="currentColor" />
+                        </button>
+                        <button 
+                          onClick={() => { addToQueue(item); setSearchResults([]); }} 
+                          className="p-4 md:p-3 bg-white/10 text-white rounded-2xl md:rounded-xl hover:bg-white/20 active:scale-90 transition-all border border-white/10"
+                          title="Add to Queue"
+                        >
+                          <Plus size={20} className="md:w-4 md:h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <div className="flex items-center gap-4">
+        <div className="hidden md:flex -space-x-2">
+          {room.users.map((u: any) => (
+            <button
+              key={u.id}
+              onClick={() => {
+                if (u.id === user?.id) {
+                  setTempName(u.name);
+                  setTempAvatar(u.avatar);
+                  setIsEditingProfile(true);
+                }
+              }}
+              className="relative group"
+            >
+              {u.avatar ? (
+                <img src={u.avatar} className="w-10 h-10 rounded-xl border-2 border-[#050505] object-cover" alt={u.name} referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-10 h-10 rounded-xl border-2 border-[#050505] bg-white/10 flex items-center justify-center">
+                  <Users size={16} className="text-gray-500" />
+                </div>
+              )}
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-white text-black text-[10px] font-bold rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                {u.name}
+              </div>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+          className={cn("p-3 md:p-2.5 rounded-2xl transition-all relative", showMobileSidebar ? "bg-white text-black" : "bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5")}
+        >
+          <MessageSquare size={22} className="md:w-5 md:h-5" />
+          {hasNewMessages && <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-[#050505]" />}
+        </button>
+      </div>
+    </header>
+  );
+});
 import socket from "./lib/socket";
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
@@ -126,7 +427,13 @@ const AvatarSelector = ({ onSelect }: { onSelect: (avatar: string) => void }) =>
           onClick={() => onSelect(url)}
           className="w-16 h-16 rounded-full overflow-hidden border-2 border-transparent hover:border-white transition-all hover:scale-110"
         >
-          <img src={url} alt="avatar" referrerPolicy="no-referrer" />
+          {url ? (
+            <img src={url} alt="avatar" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-full h-full bg-white/10 flex items-center justify-center">
+              <Users size={16} className="text-gray-500" />
+            </div>
+          )}
         </button>
       ))}
     </div>
@@ -167,7 +474,7 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
         className="glass p-8 rounded-3xl w-full max-w-md space-y-6"
       >
         <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold">Welcome to sync-me</h1>
+          <h1 className="text-3xl font-bold">Welcome to Sync-Me</h1>
           <p className="text-gray-400 text-sm">Sign in to start syncing with friends.</p>
         </div>
 
@@ -194,9 +501,15 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
             <label className="text-sm text-gray-400 mb-2 block">Choose an Avatar</label>
             <AvatarSelector onSelect={setAvatar} />
           </div>
-          {avatar && (
+          {avatar ? (
             <div className="flex justify-center">
               <img src={avatar} className="w-20 h-20 rounded-full border-2 border-white" alt="selected" referrerPolicy="no-referrer" />
+            </div>
+          ) : (
+            <div className="flex justify-center">
+              <div className="w-20 h-20 rounded-full border-2 border-white/20 bg-white/5 flex items-center justify-center">
+                <Users size={32} className="text-gray-400" />
+              </div>
             </div>
           )}
           <div>
@@ -248,7 +561,7 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
         animate={{ opacity: 1, scale: 1 }}
         className="text-center space-y-2 md:space-y-4"
       >
-        <h1 className="text-4xl md:text-6xl font-black tracking-tighter">sync-me</h1>
+        <h1 className="text-4xl md:text-6xl font-black tracking-tighter text-white">Sync-Me</h1>
         <p className="text-gray-400 text-base md:text-lg">Watch, Jam, and Play together in real-time.</p>
         <p className="text-gray-500 text-xs mt-4">made by brokenaqua (barnik)</p>
       </motion.div>
@@ -379,7 +692,7 @@ export default function App() {
     }
   };
 
-  const parseSubtitles = (subtitles: string) => {
+  const parseSubtitles = React.useCallback((subtitles: string) => {
     if (!subtitles) return [];
     return subtitles.split("\n").map((line) => {
       const match = line.match(/\[(\d+):(\d+\.\d+)\](.*)/);
@@ -389,13 +702,13 @@ export default function App() {
       }
       return null;
     }).filter(Boolean) as { time: number; text: string }[];
-  };
+  }, []);
 
-  const parsedLyrics = lyrics ? parseSubtitles(lyrics.subtitles) : [];
-  const currentLyric = parsedLyrics.find((l, i) => {
+  const parsedLyrics = React.useMemo(() => lyrics ? parseSubtitles(lyrics.subtitles) : [], [lyrics, parseSubtitles]);
+  const currentLyric = React.useMemo(() => parsedLyrics.find((l, i) => {
     const next = parsedLyrics[i + 1];
     return localTime >= l.time && (!next || localTime < next.time);
-  });
+  }), [parsedLyrics, localTime]);
 
   const togglePlay = () => {
     if (room) {
@@ -519,24 +832,26 @@ export default function App() {
 
   useEffect(() => {
     let interval: any;
-    if (room?.currentMedia.playing && room.currentMedia.item?.type === "youtube") {
+    if (room?.currentMedia.playing) {
       interval = setInterval(() => {
-        setCurrentTime((prev) => {
-          const nextTime = prev + 1;
-          if (room.currentMedia.item?.duration && nextTime >= room.currentMedia.item.duration) {
-            skipNext();
-            return 0;
+        if (!isDragging) {
+          if (room.currentMedia.item?.type === "youtube" && youtubePlayerRef.current) {
+            const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
+            setCurrentTime(ytTime);
+          } else if (room.currentMedia.item?.type === "tidal" && audioRef.current) {
+            setCurrentTime(audioRef.current.currentTime);
           }
-          return nextTime;
-        });
-      }, 1000);
+        }
+      }, 100);
     }
     return () => clearInterval(interval);
-  }, [room?.currentMedia.playing, room?.currentMedia.item?.duration, room?.currentMedia.item?.type]);
+  }, [room?.currentMedia.playing, room?.currentMedia.item?.type, isDragging]);
 
   useEffect(() => {
     if (room?.currentMedia.currentTime !== undefined) {
-      setCurrentTime(room.currentMedia.currentTime);
+      if (Math.abs(currentTime - room.currentMedia.currentTime) > 5) {
+        setCurrentTime(room.currentMedia.currentTime);
+      }
       if (audioRef.current && room.currentMedia.item?.type === "tidal") {
         if (Math.abs(audioRef.current.currentTime - room.currentMedia.currentTime) > 2) {
           audioRef.current.currentTime = room.currentMedia.currentTime;
@@ -586,6 +901,11 @@ export default function App() {
   const [tempName, setTempName] = useState("");
   const [tempAvatar, setTempAvatar] = useState("");
   const shakaPlayerRef = useRef<shaka.Player | null>(null);
+  const roomRef = useRef<RoomState | null>(null);
+
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
 
   useEffect(() => {
     shaka.polyfill.installAll();
@@ -646,13 +966,15 @@ export default function App() {
             setTimeout(() => setNotifications((prev) => prev.slice(1)), 3000);
           }
         }
+        
+        // Only fetch lyrics if the track has changed
+        if (state.currentMedia.item?.type === "tidal" && state.currentMedia.item.trackId && state.currentMedia.item.id !== roomRef.current?.currentMedia.item?.id) {
+          fetchLyrics(state.currentMedia.item.trackId);
+        }
+        
         setRoom(state);
         setIsJoiningRoom(false);
         setActiveTab(state.currentMedia.type);
-        
-        if (state.currentMedia.item?.type === "tidal" && state.currentMedia.item.trackId) {
-          fetchLyrics(state.currentMedia.item.trackId);
-        }
         
         // Update URL without refreshing
         const url = new URL(window.location.href);
@@ -859,7 +1181,15 @@ export default function App() {
 
       setIsLoadingManifest(true);
       setAudioUrl(null); // Clear previous URL immediately to prevent stale playback
-      setMood("default"); // Reset mood for new track
+      
+      // Determine mood based on title/artist
+      const title = room.currentMedia.item.title.toLowerCase();
+      if (title.includes("happy") || title.includes("upbeat") || title.includes("dance")) setMood("happy");
+      else if (title.includes("sad") || title.includes("lonely") || title.includes("cry")) setMood("sad");
+      else if (title.includes("rock") || title.includes("metal") || title.includes("fast")) setMood("energetic");
+      else if (title.includes("lofi") || title.includes("chill") || title.includes("sleep")) setMood("calm");
+      else setMood("default");
+
       fetchTidalManifest(room.currentMedia.item.trackId).finally(() => {
         setIsLoadingManifest(false);
       });
@@ -869,9 +1199,17 @@ export default function App() {
       setIsLoadingManifest(false);
       setAudioUrl(null);
       setRecommendations([]);
-      // Set a random mood for YouTube tracks
-      const fallbackMoods = ["happy", "energetic", "calm", "energetic"];
-      setMood(fallbackMoods[Math.floor(Math.random() * fallbackMoods.length)]);
+      
+      // Determine mood based on title
+      const title = room.currentMedia.item.title.toLowerCase();
+      if (title.includes("happy") || title.includes("upbeat") || title.includes("dance")) setMood("happy");
+      else if (title.includes("sad") || title.includes("lonely") || title.includes("cry")) setMood("sad");
+      else if (title.includes("rock") || title.includes("metal") || title.includes("fast")) setMood("energetic");
+      else if (title.includes("lofi") || title.includes("chill") || title.includes("sleep")) setMood("calm");
+      else {
+        const fallbackMoods = ["happy", "energetic", "calm", "energetic"];
+        setMood(fallbackMoods[Math.floor(Math.random() * fallbackMoods.length)]);
+      }
     } else {
       setIsLoadingManifest(false);
       setAudioUrl(null);
@@ -934,14 +1272,7 @@ export default function App() {
 
   useEffect(() => {
     let interval: any;
-    if (room?.currentMedia.item?.type === "youtube" && room.currentMedia.playing) {
-      interval = setInterval(() => {
-        if (youtubePlayerRef.current && !isDragging) {
-          const ytTime = youtubePlayerRef.current.getCurrentTime() || 0;
-          setCurrentTime(ytTime);
-        }
-      }, 1000);
-    }
+    // Removed redundant currentTime interval
     return () => clearInterval(interval);
   }, [room?.currentMedia.item?.type, room?.currentMedia.playing, isDragging]);
 
@@ -1004,20 +1335,28 @@ export default function App() {
       setProfileTab("edit");
       return;
     }
-    const isFav = favorites.some(f => f.id === item.id);
+    
+    const existingFav = favorites.find(f => 
+      (f.videoId && (f.videoId === item.videoId || f.videoId === item.id)) || 
+      (f.trackId && (f.trackId === item.trackId || f.trackId === item.id))
+    );
+    const isFav = !!existingFav;
+
     // Use a simplified version of the item to ensure arrayRemove works correctly
+    // We use the original item's videoId/trackId as the stable ID for favorites
     const favoriteItem = {
-      id: item.id,
-      type: item.type,
-      title: item.title,
-      artist: item.artist || "",
-      thumbnail: item.thumbnail,
-      duration: item.duration,
-      addedBy: item.addedBy,
-      videoId: item.videoId || "",
-      trackId: item.trackId || ""
+      id: item.videoId || item.trackId || item.id, // Use stable ID
+      type: item.type || (activeTab === "youtube" ? "youtube" : "tidal"),
+      title: item.title || (item as any).name,
+      artist: (item as any).artist?.name || (item as any).author?.name || (item as any).publisher || item.artist || "Unknown",
+      thumbnail: (item as any).thumbnail?.url || ((item as any).album?.cover ? `https://resources.tidal.com/images/${(item as any).album.cover.replace(/-/g, '/')}/640x640.jpg` : ((item as any).thumbnails?.[0]?.url || item.thumbnail || undefined)),
+      duration: item.duration || 0,
+      addedBy: item.addedBy || user?.name || "Guest",
+      videoId: item.videoId || (item.type === "youtube" ? item.id : ""),
+      trackId: item.trackId || (item.type === "tidal" ? item.id : "")
     };
-    await toggleFavorite(user.id, favoriteItem as any, isFav);
+    
+    await toggleFavorite(user.id, (isFav ? existingFav : favoriteItem) as any, isFav);
   };
 
   const playFavoriteList = () => {
@@ -1081,23 +1420,58 @@ export default function App() {
           setNotifications(prev => [...prev, "YouTube link added!"]);
         }
       } else if (linkInput.includes("tidal.com")) {
-        const trackId = linkInput.split("/").pop();
-        if (trackId) {
-          const res = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${trackId}`);
-          if (res.data) {
-            const item = {
-              id: trackId,
-              type: "tidal",
-              title: res.data.title,
-              artist: res.data.artist.name,
-              thumbnail: `https://resources.tidal.com/images/${res.data.album.cover.replace(/-/g, '/')}/640x640.jpg`,
-              duration: res.data.duration,
-              addedBy: user?.name || "Guest",
-              trackId: trackId
-            };
-            addToQueue(item as any);
-            setLinkInput("");
-            setNotifications(prev => [...prev, "TIDAL link added!"]);
+        const url = new URL(linkInput.includes("http") ? linkInput : `https://${linkInput}`);
+        const parts = url.pathname.split("/");
+        const id = parts.pop();
+        const type = parts.includes("playlist") ? "playlist" : "track";
+
+        if (id) {
+          if (type === "playlist") {
+            setNotifications(prev => [...prev, "Fetching TIDAL playlist..."]);
+            const res = await axios.get(`/api/playlist?id=${id}`);
+            const data = res.data;
+            let tracks = [];
+            if (data?.items && Array.isArray(data.items)) tracks = data.items;
+            else if (data?.data?.items && Array.isArray(data.data.items)) tracks = data.data.items;
+            else if (Array.isArray(data)) tracks = data;
+            else if (Array.isArray(data?.data)) tracks = data.data;
+
+            if (tracks.length > 0) {
+              for (const track of tracks) {
+                const item = {
+                  id: track.id,
+                  type: "tidal",
+                  title: track.title,
+                  artist: track.artist?.name || track.artist || "Unknown Artist",
+                  thumbnail: track.album?.cover ? `https://resources.tidal.com/images/${track.album.cover.replace(/-/g, '/')}/640x640.jpg` : undefined,
+                  duration: track.duration,
+                  addedBy: user?.name || "Guest",
+                  trackId: track.id
+                };
+                addToQueue(item as any);
+              }
+              setLinkInput("");
+              setNotifications(prev => [...prev, `TIDAL playlist added (${tracks.length} tracks)!`]);
+            } else {
+              setNotifications(prev => [...prev, "Failed to fetch TIDAL playlist items or playlist is empty."]);
+            }
+          } else {
+            const res = await axios.get(`https://hifi-api-production.up.railway.app/track/?id=${id}`);
+            if (res.data) {
+              const item = {
+                id: id,
+                type: "tidal",
+                title: res.data.title,
+                artist: res.data.artist.name,
+                thumbnail: `https://resources.tidal.com/images/${res.data.album.cover.replace(/-/g, '/')}/640x640.jpg`,
+                duration: res.data.duration,
+                addedBy: user?.name || "Guest",
+                trackId: id
+              };
+              addToQueue(item as any);
+              setLinkInput("");
+              setNotifications(prev => [...prev, "TIDAL track added!"]);
+            }
           }
         }
       } else {
@@ -1161,7 +1535,13 @@ export default function App() {
             <div className="flex-1 space-y-4">
               {room.messages.map((msg, i) => (
                 <div key={i} className={cn("flex gap-3", msg.user.id === user?.id ? "flex-row-reverse" : "")}>
-                  <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                  {msg.user.avatar ? (
+                    <img src={msg.user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center">
+                      <Users size={12} className="text-gray-500" />
+                    </div>
+                  )}
                   <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", msg.user.id === user?.id ? "bg-white text-black" : "bg-white/5")}>
                     <p className="font-bold text-[10px] mb-1 opacity-50">{msg.user.name}</p>
                     <p>{msg.text}</p>
@@ -1207,12 +1587,24 @@ export default function App() {
             ) : (
               room.queue.map((item, i) => (
                 <div key={i} className="flex gap-3 items-center group">
-                  <img src={item.thumbnail || undefined} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                  {item.thumbnail ? (
+                    <img src={item.thumbnail} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center">
+                      <Music size={16} className="text-gray-600" />
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-bold truncate">{item.title}</h4>
                     <p className="text-[10px] text-gray-500 truncate">Added by {item.addedBy}</p>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button 
+                      onClick={() => handleToggleFavorite(item)} 
+                      className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white"
+                    >
+                      <Heart size={14} className={favorites.some(f => (f.videoId && f.videoId === item.videoId) || (f.trackId && f.trackId === item.trackId)) ? "fill-red-500 text-red-500" : ""} />
+                    </button>
                     <button onClick={() => playNow(item)} className="p-2 hover:bg-white/10 rounded-lg">
                       <Play size={14} fill="currentColor" />
                     </button>
@@ -1253,177 +1645,55 @@ export default function App() {
   if (!room) return <Home onJoin={joinRoom} onCreate={createRoom} />;
 
   return (
-    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#050505]">
-      <MoodBackground mood={mood} thumbnail={room.currentMedia.item?.thumbnail} />
-      <audio 
-        ref={audioRef} 
-        src={audioUrl || undefined} 
-        crossOrigin="anonymous"
-        onEnded={skipNext}
-        onTimeUpdate={(e) => {
-          setCurrentTime((e.target as HTMLAudioElement).currentTime);
-        }}
-      />
-      {/* Sidebar - Left (Navigation) */}
-      <div className="w-full md:w-20 h-16 md:h-full glass-dark flex md:flex-col items-center justify-around md:justify-start md:py-8 px-4 md:px-0 gap-4 md:gap-8 z-50 order-last md:order-first border-t md:border-t-0 md:border-r border-white/5">
-        <div className="hidden md:flex w-12 h-12 bg-white text-black rounded-2xl items-center justify-center font-black text-xl">S</div>
-        <div className="flex md:flex-col gap-4 flex-1 items-center justify-center md:justify-start w-full md:w-auto">
-          <button
-            onClick={() => { setShowMobileSidebar(!showMobileSidebar); setHasNewMessages(false); }}
-            className={cn("md:hidden w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all relative", showMobileSidebar ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
-          >
-            <MessageSquare size={20} className="md:w-6 md:h-6" />
-            {hasNewMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />}
-          </button>
-          <div className="hidden md:block w-px h-6 bg-white/10 md:w-8 md:h-px mx-2 md:mx-0" />
-          <button
-            onClick={() => switchTab("youtube")}
-            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "youtube" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
-          >
-            <Youtube size={20} className="md:w-6 md:h-6" />
-          </button>
-          <button
-            onClick={() => switchTab("tidal")}
-            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "tidal" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
-          >
-            <Music size={20} className="md:w-6 md:h-6" />
-          </button>
-          <button
-            onClick={() => switchTab("play")}
-            className={cn("w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all", activeTab === "play" ? "bg-white text-black" : "text-gray-500 hover:text-white hover:bg-white/5")}
-          >
-            <Gamepad2 size={20} className="md:w-6 md:h-6" />
-          </button>
-        </div>
-        <div className="flex md:flex-col gap-4 items-center">
-          <button className="w-10 h-10 md:w-12 md:h-12 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5">
-            <Share2 size={20} onClick={() => { navigator.clipboard.writeText(window.location.href); setNotifications(prev => [...prev, "Link copied!"]); setTimeout(() => setNotifications(prev => prev.slice(1)), 2000); }} />
-          </button>
-          <img src={user.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-2xl border border-white/10 cursor-pointer hover:scale-105 transition-transform" alt="me" referrerPolicy="no-referrer" onClick={() => setIsEditingProfile(true)} />
-        </div>
-      </div>
+    <ErrorBoundary>
+      <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#050505]">
+        <MoodBackground mood={mood} thumbnail={room.currentMedia.item?.thumbnail} />
+        <audio 
+          ref={audioRef} 
+          src={audioUrl || undefined} 
+          crossOrigin="anonymous"
+          onEnded={skipNext}
+        />
+        <Sidebar 
+          activeTab={activeTab} 
+          switchTab={switchTab} 
+          room={room} 
+          user={user} 
+          setIsEditingProfile={setIsEditingProfile}
+          showMobileSidebar={showMobileSidebar}
+          setShowMobileSidebar={setShowMobileSidebar}
+          hasNewMessages={hasNewMessages}
+          setHasNewMessages={setHasNewMessages}
+          setNotifications={setNotifications}
+        />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
-        {/* Header */}
-        <header className="h-16 md:h-20 px-4 md:px-8 flex items-center justify-between glass-dark z-40">
-          <div className="flex items-center gap-2 md:gap-4">
-            <h2 className="text-lg md:text-xl font-bold capitalize">{activeTab}</h2>
-            <div className="hidden md:block px-3 py-1 bg-white/5 rounded-full text-xs font-mono text-gray-400 border border-white/5">
-              ROOM: {room.code}
-            </div>
-          </div>
-          <div className="flex-1 max-w-xl mx-4 md:mx-8 relative" ref={searchContainerRef}>
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    searchMedia();
-                  }
-                }}
-                onFocus={() => { if (searchResults.length > 0) setIsSearching(false); }}
-                placeholder={`Search ${activeTab === "youtube" ? "YouTube" : "TIDAL"}...`}
-                className="w-full bg-[#1a1a1a] border border-white/10 rounded-full py-2 pl-10 pr-12 md:py-2.5 md:pl-12 focus:outline-none focus:border-white/20 transition-all text-white text-sm md:text-base"
-              />
-              <button 
-                onClick={searchMedia}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors"
-                title="Search"
-              >
-                <Search size={20} />
-              </button>
-            </div>
-            {/* Search Results Dropdown */}
-            <AnimatePresence>
-              {(searchResults.length > 0 || isSearching) && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                  className="fixed md:absolute top-16 md:top-full left-0 right-0 md:mt-2 bg-[#0a0a0a] border-b md:border border-white/10 md:rounded-2xl overflow-hidden shadow-2xl z-[100] h-[calc(100vh-64px)] md:h-auto md:max-h-[70vh] overflow-y-auto"
-                >
-                  <div className="p-4 md:p-3 flex justify-between items-center border-b border-white/5 bg-[#0a0a0a] sticky top-0 z-10">
-                    <span className="text-sm md:text-xs text-gray-400 px-2 font-bold uppercase tracking-widest">{isSearching ? "Searching..." : "Search Results"}</span>
-                    <button onClick={() => setSearchResults([])} className="p-2 md:p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors">
-                      <X size={24} className="md:w-4 md:h-4" />
-                    </button>
-                  </div>
-                  {isSearching ? (
-                    <div className="p-16 md:p-12 text-center text-gray-500">
-                      <div className="w-10 h-10 md:w-8 md:h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-6 md:mb-4" />
-                      <p className="text-lg md:text-sm font-medium">Finding the best matches...</p>
-                    </div>
-                  ) : (
-                    <div className="p-2 md:p-1 space-y-1">
-                      {searchResults.map((item: any) => (
-                        <div key={item.id} className="p-4 md:p-3 hover:bg-white/5 flex gap-5 md:gap-4 items-center group rounded-2xl md:rounded-xl transition-all active:scale-[0.98]">
-                          <div className="relative flex-shrink-0">
-                            <img 
-                              src={item.thumbnail?.url || (item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/160x160.jpg` : (item.thumbnails?.[0]?.url || item.thumbnail || undefined))} 
-                              className="w-16 h-16 md:w-14 md:h-14 rounded-xl object-cover shadow-2xl border border-white/5" 
-                              alt="" 
-                              referrerPolicy="no-referrer" 
-                            />
-                            <div className="absolute inset-0 bg-black/20 rounded-xl" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-lg md:text-base leading-tight mb-1 line-clamp-2 md:line-clamp-1 text-white">{item.title || item.name}</h4>
-                            <p className="text-sm md:text-xs text-gray-400 truncate font-medium tracking-wide">
-                              {item.author?.name || item.artist?.name || item.artists?.[0]?.name || "Unknown Artist"}
-                              {item.duration ? ` • ${formatTime(item.duration)}` : ""}
-                            </p>
-                          </div>
-                          <div className="flex gap-3 md:gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
-                            <button 
-                              onClick={() => { playNow(item); setSearchResults([]); }} 
-                              className="p-4 md:p-3 bg-white text-black rounded-2xl md:rounded-xl hover:scale-110 active:scale-90 transition-transform shadow-xl"
-                              title="Play Now"
-                            >
-                              <Play size={20} className="md:w-4 md:h-4" fill="currentColor" />
-                            </button>
-                            <button 
-                              onClick={() => { addToQueue(item); setSearchResults([]); }} 
-                              className="p-4 md:p-3 bg-white/10 text-white rounded-2xl md:rounded-xl hover:bg-white/20 active:scale-90 transition-all border border-white/10"
-                              title="Add to Queue"
-                            >
-                              <Plus size={20} className="md:w-4 md:h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex -space-x-2">
-              {room.users.map((u) => (
-                <button
-                  key={u.id}
-                  onClick={() => {
-                    if (u.id === user?.id) {
-                      setTempName(u.name);
-                      setTempAvatar(u.avatar);
-                      setIsEditingProfile(true);
-                    }
-                  }}
-                  className={cn("relative transition-transform hover:scale-110 z-10", u.id === user?.id ? "cursor-pointer" : "cursor-default")}
-                >
-                  <img src={u.avatar} className="w-8 h-8 rounded-full border-2 border-[#050505]" title={u.id === user?.id ? "Edit Profile" : u.name} alt={u.name} referrerPolicy="no-referrer" />
-                  {u.id === user?.id && <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-[#050505] rounded-full" />}
-                </button>
-              ))}
-            </div>
-          </div>
-        </header>
-
+        <Header 
+          room={room} 
+          user={user} 
+          activeTab={activeTab}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          searchMedia={searchMedia}
+          isSearching={isSearching}
+          setIsSearching={setIsSearching}
+          searchResults={searchResults}
+          setSearchResults={setSearchResults}
+          playNow={playNow}
+          addToQueue={addToQueue}
+          setNotifications={setNotifications}
+          showMobileSidebar={showMobileSidebar}
+          setShowMobileSidebar={setShowMobileSidebar}
+          hasNewMessages={hasNewMessages}
+          setShowProfile={setShowProfile}
+          searchContainerRef={searchContainerRef}
+          setTempName={setTempName}
+          setTempAvatar={setTempAvatar}
+          setIsEditingProfile={setIsEditingProfile}
+          favorites={favorites}
+          handleToggleFavorite={handleToggleFavorite}
+        />
         {/* Player View */}
         <main className="flex-1 p-4 md:p-8 overflow-y-auto custom-scrollbar">
           {/* Link Paste Section */}
@@ -1491,7 +1761,7 @@ export default function App() {
                         onClick={() => handleToggleFavorite(room.currentMedia.item!)}
                         className="text-white hover:text-red-500 transition-colors"
                       >
-                        <Heart size={20} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
+                        <Heart size={20} className={favorites.some(f => (f.videoId && f.videoId === room.currentMedia.item?.videoId) || (f.trackId && f.trackId === room.currentMedia.item?.trackId)) ? "fill-red-500 text-red-500" : ""} />
                       </button>
                     </div>
                     <p className="text-sm text-gray-400">{room.currentMedia.item.artist}</p>
@@ -1531,12 +1801,18 @@ export default function App() {
                   animate={{ scale: 1, opacity: 1 }}
                   className="relative group"
                 >
-                  <img
-                    src={room.currentMedia.item.thumbnail || undefined}
-                    className="w-full aspect-square rounded-3xl shadow-2xl object-cover"
-                    alt="cover"
-                    referrerPolicy="no-referrer"
-                  />
+                  {room.currentMedia.item.thumbnail ? (
+                    <img
+                      src={room.currentMedia.item.thumbnail}
+                      className="w-full aspect-square rounded-3xl shadow-2xl object-cover"
+                      alt="cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full aspect-square rounded-3xl bg-white/5 flex items-center justify-center">
+                      <Music size={64} className="text-gray-600" />
+                    </div>
+                  )}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl">
                     <button onClick={() => setShowLyrics(true)} className="bg-white text-black px-6 py-2 rounded-full font-bold flex items-center gap-2">
                       <Mic2 size={18} /> Lyrics
@@ -1551,30 +1827,19 @@ export default function App() {
                         onClick={() => handleToggleFavorite(room.currentMedia.item!)}
                         className="text-white hover:text-red-500 transition-colors mt-2"
                       >
-                        <Heart size={32} className={favorites.some(f => f.id === room.currentMedia.item?.id) ? "fill-red-500 text-red-500" : ""} />
+                        <Heart size={32} className={favorites.some(f => (f.videoId && f.videoId === room.currentMedia.item?.videoId) || (f.trackId && f.trackId === room.currentMedia.item?.trackId)) ? "fill-red-500 text-red-500" : ""} />
                       </button>
                     </div>
                     <p className="text-xl text-gray-400">{room.currentMedia.item.artist}</p>
                   </div>
 
-                  <div className="space-y-4">
-                    <input
-                      type="range"
-                      min="0"
-                      max={room.currentMedia.item.duration || 100}
-                      value={localTime}
-                      onMouseDown={() => setIsDragging(true)}
-                      onTouchStart={() => setIsDragging(true)}
-                      onChange={handleSeek}
-                      onMouseUp={handleSeekEnd}
-                      onTouchEnd={handleSeekEnd}
-                      className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
-                    />
-                    <div className="flex justify-between text-xs text-gray-500 font-mono">
-                      <span>{formatTime(localTime)}</span>
-                      <span>{formatTime(room.currentMedia.item.duration)}</span>
-                    </div>
-                  </div>
+                  <ProgressBar 
+                    localTime={localTime} 
+                    duration={room.currentMedia.item.duration} 
+                    handleSeek={handleSeek} 
+                    handleSeekEnd={handleSeekEnd} 
+                    setIsDragging={setIsDragging} 
+                  />
 
                   <div className="flex items-center justify-center gap-4 md:gap-8">
                     <button 
@@ -1628,12 +1893,18 @@ export default function App() {
                         className="glass p-4 rounded-2xl space-y-3 hover:bg-white/5 transition-all group min-w-[160px] md:min-w-0 snap-start"
                       >
                         <div className="aspect-square bg-white/5 rounded-xl overflow-hidden relative">
-                          <img 
-                            src={item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/320x320.jpg` : undefined} 
-                            className="w-full h-full object-cover" 
-                            alt="" 
-                            referrerPolicy="no-referrer"
-                          />
+                          {item.album?.cover || item.thumbnail ? (
+                            <img 
+                              src={item.album?.cover ? `https://resources.tidal.com/images/${item.album.cover.replace(/-/g, '/')}/320x320.jpg` : (item.thumbnail || undefined)} 
+                              className="w-full h-full object-cover" 
+                              alt="" 
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <Music size={32} className="text-gray-600" />
+                            </div>
+                          )}
                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                             <button 
                               onClick={(e) => { e.stopPropagation(); addToQueue(item); }}
@@ -1835,7 +2106,13 @@ export default function App() {
                 <div className="space-y-4">
                   <div className="flex justify-center">
                     <div className="relative group">
-                      <img src={tempAvatar} className="w-24 h-24 rounded-full border-4 border-white/10" alt="avatar" referrerPolicy="no-referrer" />
+                      {tempAvatar ? (
+                        <img src={tempAvatar} className="w-24 h-24 rounded-full border-4 border-white/10" alt="avatar" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-24 h-24 rounded-full border-4 border-white/10 bg-white/10 flex items-center justify-center">
+                          <Users size={32} className="text-gray-500" />
+                        </div>
+                      )}
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex items-center justify-center text-[10px] font-bold">
                         CLICK BELOW
                       </div>
@@ -1901,7 +2178,13 @@ export default function App() {
                     <div className="space-y-2">
                       {favorites.map((fav) => (
                         <div key={fav.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 group">
-                          <img src={fav.thumbnail} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                          {fav.thumbnail ? (
+                            <img src={fav.thumbnail} className="w-12 h-12 rounded-lg object-cover" alt="" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center">
+                              <Music size={16} className="text-gray-600" />
+                            </div>
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="font-bold text-sm truncate">{fav.title}</p>
                             <p className="text-xs text-gray-400 truncate">{fav.artist}</p>
@@ -1940,25 +2223,17 @@ export default function App() {
                 <h2 className="text-5xl font-black">{room.currentMedia.item?.title}</h2>
                 <p className="text-2xl text-gray-400">{room.currentMedia.item?.artist}</p>
               </div>
-              <div className="h-[60vh] overflow-y-auto custom-scrollbar px-8 space-y-8 text-3xl font-bold text-gray-600 pb-[30vh]">
-                {parsedLyrics.length > 0 ? (
-                  parsedLyrics.map((line, i) => (
-                    <p 
-                      key={i} 
-                      ref={(el) => { lyricRefs.current[i] = el; }}
-                      className={cn("transition-all duration-500", currentLyric?.time === line.time ? "text-white scale-110" : "opacity-30")}
-                    >
-                      {line.text}
-                    </p>
-                  ))
-                ) : (
-                  <p className="text-white">No lyrics available for this track.</p>
-                )}
-              </div>
+              <LyricsView 
+                showLyrics={showLyrics} 
+                currentLyric={currentLyric} 
+                parsedLyrics={parsedLyrics} 
+                lyricRefs={lyricRefs} 
+              />
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

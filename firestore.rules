@@ -9,15 +9,20 @@ service cloud.firestore {
     // Collection: rooms
     // Document ID: 6-digit room code
     // Fields:
-    //   - code: string (required)
-    //   - users: list of User objects (required)
-    //   - queue: list of MediaItem objects (required)
+    //   - code: string (required, 6 chars)
+    //   - users: list of User objects (required, max 100)
+    //   - queue: list of MediaItem objects (required, max 500)
     //   - currentMedia: map (required)
-    //   - messages: list of objects (required)
-    //   - logs: list of strings (required)
-    //   - history: list of MediaItem objects (optional)
+    //   - messages: list of objects (required, max 1000)
+    //   - logs: list of strings (required, max 1000)
+    //   - history: list of MediaItem objects (optional, max 100)
     //   - shuffle: bool (optional)
-    //   - repeatMode: string (optional)
+    //   - repeatMode: string (optional, enum: ['none', 'one', 'all'])
+    //
+    // Collection: users
+    // Document ID: Firebase Auth UID
+    // Fields:
+    //   - favorites: list of QueueItem objects (required, max 500)
     //
     // ===============================================================
 
@@ -26,8 +31,16 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
     }
 
     function isValidRoom(data) {
@@ -37,23 +50,28 @@ service cloud.firestore {
              data.messages is list && data.messages.size() <= 1000 &&
              data.logs is list && data.logs.size() <= 1000 &&
              data.currentMedia is map &&
-             (!('history' in data) || (data.history is list && data.history.size() <= 100));
+             (!('history' in data) || (data.history is list && data.history.size() <= 100)) &&
+             (!('repeatMode' in data) || data.repeatMode in ['none', 'one', 'all']);
+    }
+
+    function isValidUser(data) {
+      return data.favorites is list && data.favorites.size() <= 500;
     }
 
     match /rooms/{roomId} {
-      // For now, allowing anyone to read/write to rooms to maintain functionality
-      // while adding basic structure validation.
-      // In a production app, we would restrict this to authenticated users
-      // and potentially use room ownership logic.
-      allow read: if true;
-      allow create: if isValidRoom(request.resource.data);
-      allow update: if isValidRoom(request.resource.data);
-      allow delete: if false; // Rooms should not be deleted by clients
+      // Allow any authenticated user to read/write rooms for now to ensure sync works.
+      // In a more restricted setup, we'd check if the user is in the 'users' list.
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidRoom(request.resource.data);
+      allow update: if isAuthenticated() && isValidRoom(request.resource.data);
+      allow delete: if false;
     }
 
     match /users/{userId} {
-      // Allow users to read/write their own profile and favorites
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if false;
     }
   }
 }
