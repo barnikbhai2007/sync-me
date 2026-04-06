@@ -393,7 +393,7 @@ const Header = React.memo(({ room, user, activeTab, searchQuery, setSearchQuery,
 });
 import socket from "./lib/socket";
 import { auth, googleProvider } from './firebase';
-import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { User, RoomState, QueueItem, Message } from "./types";
 import { cn, formatTime, generateRoomCode } from "./lib/utils";
 import axios from "axios";
@@ -461,9 +461,24 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (!name.trim()) {
+      alert("Please enter a name");
+      return;
+    }
     setIsLoading(true);
-    onComplete({ id: "", name, avatar });
+    try {
+      const result = await signInAnonymously(auth);
+      onComplete({ 
+        id: result.user.uid, 
+        name, 
+        avatar: avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${result.user.uid}` 
+      });
+    } catch (error) {
+      console.error("Anonymous Login Error:", error);
+      setIsLoading(false);
+      alert("Failed to sign in as guest.");
+    }
   };
 
   return (
@@ -1026,10 +1041,18 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
+        const storedUserStr = localStorage.getItem("sync-me-user");
+        let storedUser = null;
+        if (storedUserStr) {
+          try {
+            storedUser = JSON.parse(storedUserStr);
+          } catch (e) {}
+        }
+        
         const userData: User = {
           id: firebaseUser.uid,
-          name: firebaseUser.displayName || "Anonymous",
-          avatar: firebaseUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${firebaseUser.uid}`
+          name: firebaseUser.displayName || (storedUser?.id === firebaseUser.uid ? storedUser.name : "Anonymous"),
+          avatar: firebaseUser.photoURL || (storedUser?.id === firebaseUser.uid ? storedUser.avatar : `https://api.dicebear.com/7.x/avataaars/svg?seed=${firebaseUser.uid}`)
         };
         setUser(userData);
         localStorage.setItem("sync-me-user", JSON.stringify(userData));
@@ -1052,6 +1075,9 @@ export default function App() {
     const code = generateRoomCode();
     if (user) {
       try {
+        if (!auth.currentUser) {
+          await signInAnonymously(auth);
+        }
         await joinRoomService(code, user);
         setRoom({
           code,
@@ -1076,7 +1102,15 @@ export default function App() {
 
   const joinRoom = async (code: string) => {
     if (user) {
-      await joinRoomService(code, user);
+      try {
+        if (!auth.currentUser) {
+          await signInAnonymously(auth);
+        }
+        await joinRoomService(code, user);
+      } catch (error) {
+        console.error("Failed to join room:", error);
+        alert("Failed to join room. Please check the code and try again.");
+      }
     }
     const url = new URL(window.location.href);
     url.searchParams.set("room", code);
