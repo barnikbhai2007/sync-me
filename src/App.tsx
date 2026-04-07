@@ -547,19 +547,27 @@ const UserSetup = ({ onComplete }: { onComplete: (user: User) => void }) => {
   );
 };
 
-const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: () => void }) => {
+const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => Promise<void>; onCreate: () => Promise<void> }) => {
   const [code, setCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setIsCreating(true);
-    onCreate();
+    try {
+      await onCreate();
+    } catch (e) {
+      setIsCreating(false);
+    }
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     setIsJoining(true);
-    onJoin(code);
+    try {
+      await onJoin(code);
+    } catch (e) {
+      setIsJoining(false);
+    }
   };
 
   return (
@@ -600,9 +608,9 @@ const Home = ({ onJoin, onCreate }: { onJoin: (code: string) => void; onCreate: 
               type="text"
               maxLength={6}
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
               placeholder="Enter 6-digit code"
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30"
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-white/30 uppercase"
             />
             <button
               disabled={code.length !== 6 || isJoining || isCreating}
@@ -629,6 +637,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem("sync-me-user");
     return saved ? JSON.parse(saved) : null;
+  });
+  const [targetRoomCode, setTargetRoomCode] = useState<string | null>(() => {
+    const code = new URLSearchParams(window.location.search).get("room");
+    return code ? code.toUpperCase() : null;
   });
   const [room, setRoom] = useState<RoomState | null>(null);
   const [activeTab, setActiveTab] = useState<"youtube" | "tidal" | "play">("youtube");
@@ -984,13 +996,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomCodeFromUrl = params.get("room");
-    const targetCode = room?.code || roomCodeFromUrl;
-
-    if (targetCode && user) {
-      const unsubscribe = subscribeToRoom(targetCode, (state) => {
-        if (room && state.logs.length > room.logs.length) {
+    if (targetRoomCode && user) {
+      const unsubscribe = subscribeToRoom(targetRoomCode, (state) => {
+        if (roomRef.current && state.logs.length > roomRef.current.logs.length) {
           const newLog = state.logs[state.logs.length - 1];
           if (!newLog.startsWith("emoji:")) {
             setNotifications((prev) => [...prev, newLog]);
@@ -1013,20 +1021,25 @@ export default function App() {
       });
       return () => unsubscribe();
     }
-  }, [room?.code, user]);
+  }, [targetRoomCode, user]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomCode = params.get("room");
-
-    if (roomCode && user && !room) {
-      setIsJoiningRoom(true);
-      joinRoomService(roomCode, user).catch(err => {
-        console.error("Failed to join room from URL:", err);
-        setIsJoiningRoom(false);
-      });
+    if (targetRoomCode && user && (!room || room.code !== targetRoomCode)) {
+      const joinFromUrl = async () => {
+        setIsJoiningRoom(true);
+        try {
+          if (!auth.currentUser) {
+            await signInAnonymously(auth);
+          }
+          await joinRoomService(targetRoomCode, user);
+        } catch (err) {
+          console.error("Failed to join room from URL:", err);
+          setIsJoiningRoom(false);
+        }
+      };
+      joinFromUrl();
     }
-  }, [user]); // Run when user is available or changes
+  }, [user, targetRoomCode, room?.code]); // Run when user or targetRoomCode changes
 
   const switchTab = (tab: "youtube" | "tidal" | "play") => {
     setActiveTab(tab);
@@ -1082,6 +1095,7 @@ export default function App() {
           await signInAnonymously(auth);
         }
         await joinRoomService(code, user);
+        setTargetRoomCode(code);
         setRoom({
           code,
           users: [user],
@@ -1096,6 +1110,7 @@ export default function App() {
       } catch (error) {
         console.error("Failed to create room:", error);
         alert("Failed to create room. Please try again.");
+        throw error;
       }
     }
     const url = new URL(window.location.href);
@@ -1104,19 +1119,24 @@ export default function App() {
   };
 
   const joinRoom = async (code: string) => {
+    const upperCode = code.toUpperCase();
     if (user) {
       try {
         if (!auth.currentUser) {
           await signInAnonymously(auth);
         }
-        await joinRoomService(code, user);
+        await joinRoomService(upperCode, user);
+        setTargetRoomCode(upperCode);
       } catch (error) {
         console.error("Failed to join room:", error);
         alert("Failed to join room. Please check the code and try again.");
+        throw error;
       }
+    } else {
+      setTargetRoomCode(upperCode);
     }
     const url = new URL(window.location.href);
-    url.searchParams.set("room", code);
+    url.searchParams.set("room", upperCode);
     window.history.replaceState({}, "", url.toString());
   };
 
